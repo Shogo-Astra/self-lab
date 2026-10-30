@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Self Lab</title>
+  <meta name="description" content="スポーツファーマシストの知識で、自分の能力を数値化して伸ばすアプリ">
+  <meta name="theme-color" content="#fcfcfb" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1a1a19" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Self Lab">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="main"></main>
+  <div id="sheet"></div>
+  <nav id="tabs">
+    <button data-action="tab" data-tab="home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 5v8l-8 5-8-5V8z"/></svg>ステータス</button>
+    <button data-action="tab" data-tab="log"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM9 9h6M9 13h6M9 17h3"/></svg>記録</button>
+    <button data-action="tab" data-tab="learn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6l8-3 8 3-8 3zM7 8v6c0 2 2.5 3 5 3s5-1 5-3V8"/></svg>学ぶ</button>
+    <button data-action="tab" data-tab="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg>設定</button>
+  </nav>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <noscript>JavaScriptを有効にしてください。</noscript>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
