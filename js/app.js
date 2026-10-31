@@ -466,7 +466,11 @@ function startHealthImport(text) {
   if (!parsed) { toast('Self Lab用のデータが見つかりませんでした'); return; }
   if (!Object.keys(parsed.values).length) { toast(parsed.skipped.length ? '取り込める値がありませんでした(範囲外の値のみ)' : '取り込める値がありませんでした'); return; }
   const day = parsed.day && parsed.day <= today() ? parsed.day : today();
-  ui.health = { ...parsed, day };
+  // 種類の違う3つ以上の値が同じ数字なら、ショートカットが種類を読み分けられていない可能性が高い
+  const freq = {};
+  for (const v of Object.values(parsed.values)) freq[v] = (freq[v] ?? 0) + 1;
+  const [same, n] = Object.entries(freq).sort((a, b) => b[1] - a[1])[0];
+  ui.health = { ...parsed, day, suspicious: n >= 3 ? same : null };
   render(); $('#sheet').scrollTop = 0;
 }
 
@@ -487,8 +491,9 @@ function viewHealthImport() {
         <input type="date" value="${h.day}" max="${today()}" data-action="health-day"></label>
       <div class="list">${rows}</div>
       ${h.skipped.length ? `<p class="chk small">範囲外のため取り込まない:${esc(h.skipped.join('、'))}</p>` : ''}
+      ${h.suspicious !== null ? `<div class="info"><h3>値がおかしいかもしれません</h3><p>種類の違う3つ以上の項目が、同じ数字(${esc(h.suspicious)})になっています。ショートカットがヘルスケアの種類を正しく読めていない可能性があります。ヘルスケアアプリの値と見比べてから取り込んでください。</p></div>` : ''}
       <p class="t-muted small">チェックインのほかの項目(鍛えた部位・睡眠休養感など)はそのまま残ります。測定は前回と同じ値なら追加しません。</p>
-      <button class="btn primary wide" data-action="health-apply">取り込む</button>
+      <button class="btn ${h.suspicious !== null ? '' : 'primary '}wide" data-action="health-apply">${h.suspicious !== null ? 'このまま取り込む' : '取り込む'}</button>
     </section>
   </div>`;
 }
