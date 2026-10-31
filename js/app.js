@@ -7,10 +7,11 @@ import {
 import { TIPS, PART_TIPS, QUIZ, QUIZ_CATS } from './content.js';
 import { radar, bodyMap, lineChart, barChart } from './charts.js';
 import { encodeCard, decodeCard, findCode, newId } from './share.js';
+import { CHANGELOG, isNewer } from './changelog.js';
 
-const VERSION = '0.4.0';
+const VERSION = CHANGELOG[0].version;
 const KEY = 'sp-health-v1';
-const DEFAULT = { v: 1, profile: null, measures: [], daily: {}, quiz: {}, targets: {}, xp: 0, awarded: {}, me: null, friends: {}, selfInit: null, decayNotified: [] };
+const DEFAULT = { v: 1, profile: null, measures: [], daily: {}, quiz: {}, targets: {}, xp: 0, awarded: {}, me: null, friends: {}, selfInit: null, decayNotified: [], seenVersion: null };
 
 // ---------- 保存 ----------
 
@@ -612,6 +613,7 @@ function viewSettings() {
     <label class="btn wide">バックアップから戻す<input type="file" accept="application/json,.json" id="import-file" hidden></label>
     <button class="btn danger wide" data-action="wipe">すべてのデータを消す</button>
   </section>
+  ${changelogSection()}
   <section class="card"><h2>ランクのしくみ</h2>
     <p class="small"><b>ランク</b>:G−からSSS+までの30段階。最初は上がりやすく、上に行くほど長い継続が必要です(週2回の継続で C− まで約3か月、A− まで約1年、S− まで約2年が目安)。</p>
     <p class="small"><b>ポイント</b>:鍛えた日に+${GAIN}pt。同じ項目を48時間以内に続けた日は回復途中として+${GAIN_SOON}pt。急に上がらないよう、7日間で最大${WEEK_CAP}ptまで。</p>
@@ -626,6 +628,33 @@ function viewSettings() {
   <p class="t-muted center small">Sports Pharmacy Self Lab v${VERSION}</p>`;
 }
 
+// ---------- アップデート情報 ----------
+
+// まだ見ていない更新内容。新しく使い始めた人には出さない。見たバージョンが記録されていない人には最新分だけ出す
+function unseenNotes() {
+  if (!state.profile || state.seenVersion === VERSION) return [];
+  if (!state.seenVersion) return [CHANGELOG[0]];
+  return CHANGELOG.filter((c) => isNewer(c.version, state.seenVersion));
+}
+
+const noteBody = (c) => `<ul class="ex">${c.items.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`;
+
+function viewWhatsNew(notes) {
+  return `<div class="modal-back"><div class="modal card" role="dialog" aria-modal="true" aria-labelledby="wn-title">
+    <p class="t-label">アップデート情報</p>
+    <h2 id="wn-title">v${VERSION} になりました</h2>
+    ${notes.map((c) => `<h3>v${c.version} ${esc(c.title)}</h3>${noteBody(c)}`).join('')}
+    <p class="t-muted small">設定タブの「アップデート情報」から、いつでも見返せます。</p>
+    <button class="btn primary wide" data-action="whats-new-ok">閉じる</button>
+  </div></div>`;
+}
+
+function changelogSection() {
+  return `<section class="card"><h2>アップデート情報</h2><p class="t-muted">今のバージョン:v${VERSION}</p>
+    ${CHANGELOG.map((c, i) => `<details class="tip" ${i === 0 ? 'open' : ''}><summary>v${c.version} ${esc(c.title)} <small class="t-muted">${md(c.date)}</small></summary>${noteBody(c)}</details>`).join('')}
+  </section>`;
+}
+
 // ---------- 描画 ----------
 
 function render() {
@@ -633,7 +662,9 @@ function render() {
   $('#main').innerHTML = views[ui.tab]();
   const sheet = ui.incoming ? viewIncoming() : ui.setup && state.profile ? viewSetup() : ui.friend ? viewFriend(ui.friend) : ui.detail && status() ? viewDetail(ui.detail) : '';
   $('#sheet').innerHTML = sheet;
-  document.body.classList.toggle('sheet-open', !!sheet);
+  const notes = ui.incoming ? [] : unseenNotes();
+  $('#modal').innerHTML = notes.length ? viewWhatsNew(notes) : '';
+  document.body.classList.toggle('sheet-open', !!sheet || !!notes.length);
   document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === ui.tab));
 }
 
@@ -653,6 +684,7 @@ const actions = {
     render();
   },
   friend: (el) => { ui.friend = el.dataset.id; render(); $('#sheet').scrollTop = 0; },
+  'whats-new-ok': () => { state.seenVersion = VERSION; save(); render(); },
   'setup-open': () => { ui.setup = true; render(); $('#sheet').scrollTop = 0; },
   'setup-close': () => { ui.setup = false; render(); },
   'setup-skip': () => {
@@ -768,6 +800,7 @@ document.addEventListener('submit', (e) => {
     case 'profile-form': {
       const first = !state.profile;
       state.profile = { sex: f.get('sex'), birthYear: Number(f.get('birthYear')), height: num(f.get('height')) };
+      if (first) state.seenVersion = VERSION;
       save(); toast('保存しました');
       if (first) { ui.setup = true; go('home'); } else render();
       break;

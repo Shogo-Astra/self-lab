@@ -317,6 +317,17 @@ select {
 .sw-box li:last-child { border-bottom: 0; }
 [hidden] { display: none !important; }
 
+/* アップデート情報のポップアップ */
+#modal:empty { display: none; }
+.modal-back {
+  position: fixed; inset: 0; z-index: 40;
+  display: flex; align-items: center; justify-content: center;
+  padding: calc(env(safe-area-inset-top) + 16px) 16px calc(env(safe-area-inset-bottom) + 16px);
+  background: rgba(0, 0, 0, 0.5);
+}
+.modal { max-width: 480px; max-height: 100%; overflow-y: auto; margin: 0; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3); }
+.modal h3 { margin-top: 14px; color: var(--text-primary); }
+
 /* フレンド */
 .fcard { margin-bottom: 8px; }
 .fcard-top { display: flex; gap: 12px; align-items: center; }
