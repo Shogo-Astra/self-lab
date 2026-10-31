@@ -48,7 +48,7 @@ function normalize(key, raw) {
 export function parseHealth(text) {
   const t = toHalf(String(text ?? ''));
   if (!/SELFLAB/i.test(t)) return null;
-  const out = { day: null, values: {}, skipped: [] };
+  const out = { day: null, values: {}, skipped: [], all: {} }; // all:範囲外も含めて読めた数値(同じ数字ばかりでないかの確認用)
   for (const line of t.split(/\r?\n/)) {
     const m = line.match(/^\s*([a-z0-9]+)\s*[=:]\s*(.*)$/i);
     if (!m) continue;
@@ -62,6 +62,7 @@ export function parseHealth(text) {
     if (!def || raw === '') continue;
     const v = normalize(key, raw);
     if (v === null || Number.isNaN(v)) continue;
+    out.all[key] = v;
     if (v < def.min || v > def.max) {
       // 歩数0・睡眠0は「データなし」なので黙って飛ばす
       if (!((key === 'steps' || key === 'sleep') && v === 0)) out.skipped.push(`${def.label}(${raw})`);

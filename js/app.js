@@ -466,10 +466,10 @@ function startHealthImport(text) {
   if (!parsed) { toast('Self Lab用のデータが見つかりませんでした'); return; }
   if (!Object.keys(parsed.values).length) { toast(parsed.skipped.length ? '取り込める値がありませんでした(範囲外の値のみ)' : '取り込める値がありませんでした'); return; }
   const day = parsed.day && parsed.day <= today() ? parsed.day : today();
-  // 種類の違う3つ以上の値が同じ数字なら、ショートカットが種類を読み分けられていない可能性が高い
+  // 種類の違う3つ以上の値が同じ数字なら、ショートカットが種類を読み分けられていない可能性が高い(範囲外の値も数える。0は除く)
   const freq = {};
-  for (const v of Object.values(parsed.values)) freq[v] = (freq[v] ?? 0) + 1;
-  const [same, n] = Object.entries(freq).sort((a, b) => b[1] - a[1])[0];
+  for (const v of Object.values(parsed.all)) if (v !== 0) freq[v] = (freq[v] ?? 0) + 1;
+  const [same, n] = Object.entries(freq).sort((a, b) => b[1] - a[1])[0] ?? [null, 0];
   ui.health = { ...parsed, day, suspicious: n >= 3 ? same : null, raw: String(text).slice(0, 2000) };
   render(); $('#sheet').scrollTop = 0;
 }
