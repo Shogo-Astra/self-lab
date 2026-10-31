@@ -19,7 +19,8 @@ function niceTicks(lo, hi, n = 3) {
 const fmt = (v) => (Math.abs(v) >= 1000 ? Math.round(v).toLocaleString() : Number.isInteger(v) ? String(v) : v.toFixed(1));
 
 // 6軸のレーダー。axes: [{key, name, score|null, rank}]
-export function radar(axes) {
+// compare: 比べる相手の点数の配列(フレンド)。2系列目は破線で描き、色だけに頼らない
+export function radar(axes, compare = null, interactive = true) {
   const W = 340; const H = 300; const cx = W / 2; const cy = 150; const R = 96;
   const n = axes.length;
   const ang = (i) => -Math.PI / 2 + (2 * Math.PI * i) / n;
@@ -31,7 +32,13 @@ export function radar(axes) {
   }).join('');
   const spokes = axes.map((_, i) => { const [x, y] = pt(i, R); return `<line x1="${cx}" y1="${cy}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" class="grid" />`; }).join('');
 
-  const poly = axes.map((a, i) => pt(i, (R * (a.score ?? 0)) / 100).map((c) => c.toFixed(1)).join(',')).join(' ');
+  const polyOf = (scores) => scores.map((v, i) => pt(i, (R * (v ?? 0)) / 100).map((c) => c.toFixed(1)).join(',')).join(' ');
+  const poly = polyOf(axes.map((a) => a.score));
+  const other = compare ? `<polygon points="${polyOf(compare)}" class="area area-2" />${compare.map((v, i) => {
+    if (v === null) return '';
+    const [x, y] = pt(i, (R * v) / 100);
+    return `<rect x="${(x - 4).toFixed(1)}" y="${(y - 4).toFixed(1)}" width="8" height="8" class="dot-2" />`;
+  }).join('')}` : '';
   const dots = axes.map((a, i) => {
     if (a.score === null) return '';
     const [x, y] = pt(i, (R * a.score) / 100);
@@ -42,17 +49,21 @@ export function radar(axes) {
     const [x, y] = pt(i, R + 30);
     const anchor = Math.abs(x - cx) < 4 ? 'middle' : x > cx ? 'start' : 'end';
     const dx = anchor === 'start' ? -10 : anchor === 'end' ? 10 : 0;
-    const val = a.score === null ? '未測定' : `${a.score} ${a.rank}`;
-    return `<g class="radar-label" data-action="detail" data-stat="${a.key}" role="button" tabindex="0" aria-label="${esc(a.name)} ${esc(val)}">
+    const val = compare
+      ? `${a.score ?? '—'} / ${compare[i] ?? '—'}`
+      : a.score === null ? '未測定' : `${a.score} ${a.rank}`;
+    const act = interactive ? `data-action="detail" data-stat="${a.key}" role="button" tabindex="0"` : '';
+    return `<g class="radar-label${interactive ? '' : ' static'}" ${act} aria-label="${esc(a.name)} ${esc(val)}">
       <rect x="${(x + dx - (anchor === 'end' ? 64 : anchor === 'middle' ? 32 : 0)).toFixed(1)}" y="${(y - 20).toFixed(1)}" width="64" height="40" class="hit" />
       <text x="${(x + dx).toFixed(1)}" y="${(y - 4).toFixed(1)}" text-anchor="${anchor}" class="t-sub">${esc(a.name)}</text>
-      <text x="${(x + dx).toFixed(1)}" y="${(y + 14).toFixed(1)}" text-anchor="${anchor}" class="${a.score === null ? 't-muted' : 't-val'}">${esc(val)}</text>
+      <text x="${(x + dx).toFixed(1)}" y="${(y + 14).toFixed(1)}" text-anchor="${anchor}" class="${a.score === null && !compare ? 't-muted' : 't-val'}">${esc(val)}</text>
     </g>`;
   }).join('');
 
   return `<svg viewBox="0 0 ${W} ${H}" class="chart radar" role="img" aria-label="能力のレーダーチャート">
     ${rings}${spokes}
     <text x="${cx + 3}" y="${(cy - (R * 60) / 100 - 3).toFixed(1)}" class="t-axis">60</text>
+    ${other}
     <polygon points="${poly}" class="area" />
     ${dots}${labels}
   </svg>`;

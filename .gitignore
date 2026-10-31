@@ -1,3 +1,4 @@
 .DS_Store
 *.json
 !manifest.webmanifest
+_test/

@@ -4,10 +4,11 @@ import {
 } from './standards.js';
 import { TIPS, QUIZ, QUIZ_CATS } from './content.js';
 import { radar, lineChart, barChart } from './charts.js';
+import { encodeCard, decodeCard, findCode, newId } from './share.js';
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 const KEY = 'sp-health-v1';
-const DEFAULT = { v: 1, profile: null, measures: [], daily: {}, quiz: {}, targets: {}, xp: 0, awarded: {} };
+const DEFAULT = { v: 1, profile: null, measures: [], daily: {}, quiz: {}, targets: {}, xp: 0, awarded: {}, me: null, friends: {} };
 
 // ---------- 保存 ----------
 
@@ -22,7 +23,12 @@ function load() {
 let state = load();
 const save = () => localStorage.setItem(KEY, JSON.stringify(state));
 
-const ui = { tab: state.profile ? 'home' : 'settings', logMode: 'daily', logDate: isoDate(new Date()), detail: null, quiz: null };
+const ui = {
+  tab: state.profile ? 'home' : 'settings', logMode: 'daily', logDate: isoDate(new Date()),
+  detail: null, quiz: null, friend: null, incoming: null,
+};
+// iPhoneではホーム画面のアプリとSafariで保存場所が別になる
+const standalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
 
 // ---------- 小道具 ----------
 
@@ -257,6 +263,114 @@ function viewLearn() {
   ${STATS.map((s) => `<section class="card"><h3>${s.name}を伸ばす</h3>${(TIPS[s.key] ?? []).map((t) => `<details class="tip"><summary>${esc(t.title)}</summary><p>${esc(t.body)}</p>${srcList(t.src)}</details>`).join('')}</section>`).join('')}`;
 }
 
+// ---------- フレンド ----------
+
+function myCard() {
+  const stats = computeStats(state, QUIZ.length);
+  return {
+    v: 1, id: state.me.id, n: state.me.nick, d: today(), lv: levelFromXp(state.xp).level,
+    ov: overall(stats), s: STATS.map((s) => stats[s.key].score), sk: streak(),
+  };
+}
+
+const cardUrl = (card) => `${location.origin}${location.pathname}#f=${encodeCard(card)}`;
+
+function daysAgo(iso) {
+  const n = Math.round((Date.parse(today()) - Date.parse(iso)) / 86400000);
+  return n <= 0 ? '今日' : `${n}日前`;
+}
+
+function cardSummary(c) {
+  return `<div class="fcard">
+    <div class="fcard-top"><span class="badge r-${rankOf(c.ov)}">${rankOf(c.ov)}</span>
+      <div><b>${esc(c.n)}</b><p class="t-muted">Lv.${c.lv} ・ 総合 ${c.ov ?? '—'} ・ 連続記録 ${c.sk}日 ・ ${md(c.d)}時点</p></div></div>
+    <div class="mini">${STATS.map((s, i) => `<span><small>${s.short}</small><b>${c.s[i] ?? '—'}</b></span>`).join('')}</div>
+  </div>`;
+}
+
+function viewFriends() {
+  const friends = Object.values(state.friends).sort((a, b) => (a.d < b.d ? 1 : -1));
+  let mine;
+  if (!state.profile) {
+    mine = `<p class="t-muted">自分のカードを作るには、先に設定タブでプロフィールを入れてください。</p>`;
+  } else if (!state.me?.nick) {
+    mine = `<form id="nick-form" class="form"><label class="field"><span>ニックネーム<small>カードに表示される名前です(20文字まで)</small></span>
+      <input type="text" name="nick" maxlength="20" required></label><button class="btn primary wide" type="submit">カードを作る</button></form>`;
+  } else {
+    mine = `${cardSummary(myCard())}
+      <button class="btn primary wide" data-action="share">カードを送る</button>
+      <details class="tip"><summary>ニックネームを変える</summary><form id="nick-form" class="form">
+        <label class="field"><input type="text" name="nick" maxlength="20" value="${esc(state.me.nick)}" required></label>
+        <button class="btn wide" type="submit">保存する</button></form></details>`;
+  }
+  return `<section class="card"><h2>自分のカード</h2>${mine}
+    <p class="t-muted small">カードに入るのは、ニックネーム・レベル・ランク・6能力の点数・連続記録日数だけです。体重や血圧などの値は入りません。リンクを受け取った人は誰でも見られます。</p>
+  </section>
+  <form id="friend-form" class="card form"><h2>フレンドを追加</h2>
+    <p class="t-muted">届いたメッセージ(リンク)をそのまま貼り付けてください。同じ人のカードは新しいものに置き換わります。</p>
+    <textarea name="code" rows="3" placeholder="ここに貼り付け" required></textarea>
+    <button class="btn primary wide" type="submit">追加する</button>
+  </form>
+  <section class="card list"><h2>フレンド</h2>
+    ${friends.length ? friends.map((f) => `<button class="row" data-action="friend" data-id="${esc(f.id)}">
+      <span class="badge r-${rankOf(f.ov)}">${rankOf(f.ov)}</span>
+      <span class="row-name">${esc(f.n)}<small>${daysAgo(f.d)}</small></span>
+      <span class="row-sub">Lv.${f.lv}</span>
+      <span class="row-val">${f.ov ?? '—'}</span></button>`).join('')
+    : '<p class="t-muted">まだいません。友人にカードを送ってもらい、上の欄に貼り付けてください。</p>'}
+  </section>`;
+}
+
+function compareTable(mine, other, otherName) {
+  const cell = (v) => (v === null ? '—' : `${v} <small>${rankOf(v)}</small>`);
+  return `<table class="cmp"><thead><tr><th>能力</th><th>自分</th><th>${esc(otherName)}</th></tr></thead><tbody>
+    ${STATS.map((s, i) => `<tr><td>${s.name}</td><td>${cell(mine[i])}</td><td>${cell(other[i])}</td></tr>`).join('')}
+  </tbody></table>`;
+}
+
+function viewFriend(id) {
+  const f = state.friends[id];
+  if (!f) return '';
+  const stats = state.profile ? computeStats(state, QUIZ.length) : null;
+  const mine = STATS.map((s) => (stats ? stats[s.key].score : null));
+  const axes = STATS.map((s, i) => ({ key: s.key, name: s.name, score: mine[i], rank: rankOf(mine[i]) }));
+  return `<div class="sheet" role="dialog" aria-label="${esc(f.n)}との比較">
+    <header class="sheet-head"><button class="btn ghost" data-action="close">‹ 戻る</button><h2>${esc(f.n)}</h2><span></span></header>
+    <section class="card">${cardSummary(f)}</section>
+    <section class="card">
+      <div class="legend"><span><i class="sw sw-1"></i>自分</span><span><i class="sw sw-2"></i>${esc(f.n)}</span></div>
+      ${radar(axes, f.s, false)}
+      ${compareTable(mine, f.s, f.n)}
+    </section>
+    <p class="t-muted center small">${md(f.d)}時点の状態です。最新の状態は、相手に新しいカードを送ってもらうと更新されます。</p>
+    <button class="btn danger wide" data-action="del-friend" data-id="${esc(f.id)}">フレンドから外す</button>
+  </div>`;
+}
+
+function viewIncoming() {
+  const { card } = ui.incoming;
+  const axes = STATS.map((s, i) => ({ key: s.key, name: s.name, score: card.s[i], rank: rankOf(card.s[i]) }));
+  const self = card.id === state.me?.id;
+  const known = state.friends[card.id];
+  return `<div class="sheet" role="dialog" aria-label="フレンドのカード">
+    <header class="sheet-head"><button class="btn ghost" data-action="close">‹ 閉じる</button><h2>フレンドのカード</h2><span></span></header>
+    <section class="card">${cardSummary(card)}${radar(axes, null, false)}</section>
+    ${self ? '<p class="t-muted center">これはあなた自身のカードです。</p>' : `
+      ${standalone ? '' : `<section class="card"><p>ホーム画面のSelf Labに追加するときは、リンクをコピーしてアプリの「フレンド」タブに貼り付けてください。iPhoneでは、Safariとホーム画面のアプリで保存場所が別になっています。</p>
+        <button class="btn wide" data-action="copy-card">リンクをコピー</button></section>`}
+      <button class="btn primary wide" data-action="add-incoming">${known ? 'カードを更新する' : standalone ? 'フレンドに追加' : 'このブラウザでフレンドに追加'}</button>`}
+  </div>`;
+}
+
+function addFriend(card) {
+  if (card.id === state.me?.id) { toast('これは自分のカードです'); return false; }
+  const known = state.friends[card.id];
+  if (known && known.d > card.d) { toast('もっと新しいカードを登録済みです'); return false; }
+  state.friends[card.id] = { ...card, added: known?.added ?? today() };
+  save(); toast(known ? `${card.n}さんのカードを更新しました` : `${card.n}さんを追加しました`);
+  return true;
+}
+
 // ---------- 設定 ----------
 
 function viewSettings() {
@@ -296,21 +410,49 @@ function viewSettings() {
 // ---------- 描画 ----------
 
 function render() {
-  const views = { home: viewHome, log: viewLog, learn: viewLearn, settings: viewSettings };
+  const views = { home: viewHome, log: viewLog, learn: viewLearn, friends: viewFriends, settings: viewSettings };
   $('#main').innerHTML = views[ui.tab]();
-  $('#sheet').innerHTML = ui.detail ? viewDetail(ui.detail) : '';
-  document.body.classList.toggle('sheet-open', !!ui.detail);
+  const sheet = ui.incoming ? viewIncoming() : ui.friend ? viewFriend(ui.friend) : ui.detail ? viewDetail(ui.detail) : '';
+  $('#sheet').innerHTML = sheet;
+  document.body.classList.toggle('sheet-open', !!sheet);
   document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === ui.tab));
 }
 
-function go(tab) { ui.tab = tab; ui.detail = null; render(); window.scrollTo(0, 0); }
+function go(tab) { ui.tab = tab; ui.detail = null; ui.friend = null; render(); window.scrollTo(0, 0); }
 
 // ---------- 操作 ----------
 
 const actions = {
   tab: (el) => go(el.dataset.tab),
   detail: (el) => { ui.detail = el.dataset.stat; render(); $('#sheet').scrollTop = 0; },
-  close: () => { ui.detail = null; render(); },
+  close: () => {
+    if (ui.incoming) ui.incoming = null; else if (ui.friend) ui.friend = null; else ui.detail = null;
+    render();
+  },
+  friend: (el) => { ui.friend = el.dataset.id; render(); $('#sheet').scrollTop = 0; },
+  'del-friend': (el) => {
+    const f = state.friends[el.dataset.id];
+    if (!f || !confirm(`${f.n}さんをフレンドから外しますか?`)) return;
+    delete state.friends[f.id]; ui.friend = null; save(); render();
+  },
+  share: async () => {
+    const card = myCard();
+    const url = cardUrl(card);
+    const text = `${card.n}さんのSelf Lab(${md(card.d)}時点 Lv.${card.lv}・総合${rankOf(card.ov)})`;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'Self Lab', text, url }); } catch { /* 共有シートを閉じた */ }
+      return;
+    }
+    await navigator.clipboard.writeText(`${text}\n${url}`);
+    toast('リンクをコピーしました');
+  },
+  'copy-card': async () => {
+    await navigator.clipboard.writeText(cardUrl(ui.incoming.card));
+    toast('コピーしました。アプリのフレンドタブに貼り付けてください');
+  },
+  'add-incoming': () => {
+    if (addFriend(ui.incoming.card)) { ui.incoming = null; go('friends'); }
+  },
   'log-for': (el) => { ui.logMode = el.dataset.mode; ui.logDate = today(); go('log'); },
   'log-mode': (el) => { ui.logMode = el.dataset.mode; render(); },
   drink: (el) => {
@@ -409,6 +551,20 @@ document.addEventListener('submit', (e) => {
       save(); toast(xp ? `${added.length}件保存 +${xp}XP` : `${added.length}件保存しました`); render();
       break;
     }
+    case 'nick-form': {
+      const nick = String(f.get('nick') || '').trim().slice(0, 20);
+      if (!nick) return;
+      state.me = { id: state.me?.id ?? newId(), nick };
+      save(); toast('保存しました'); render();
+      break;
+    }
+    case 'friend-form': {
+      const code = findCode(f.get('code'));
+      const card = code && decodeCard(code);
+      if (!card) { toast('カードを読み取れませんでした。リンク全体を貼り付けてください'); return; }
+      if (addFriend(card)) render();
+      break;
+    }
     case 'target-form': {
       for (const k of STRENGTH_KEYS) { const v = num(f.get(k)); if (v !== undefined) state.targets[k] = v; }
       save(); toast('目標値を保存しました'); render();
@@ -430,6 +586,18 @@ async function importFile(file) {
   }
 }
 
+// フレンドのカードのリンク(#f=...)で開かれたとき
+function readHash() {
+  const code = findCode(location.hash);
+  if (!code) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  const card = decodeCard(code);
+  if (card) ui.incoming = { card };
+  else setTimeout(() => toast('カードを読み取れませんでした'), 300);
+}
+window.addEventListener('hashchange', () => { readHash(); render(); });
+
+readHash();
 render();
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
