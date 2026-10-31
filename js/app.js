@@ -470,7 +470,7 @@ function startHealthImport(text) {
   const freq = {};
   for (const v of Object.values(parsed.values)) freq[v] = (freq[v] ?? 0) + 1;
   const [same, n] = Object.entries(freq).sort((a, b) => b[1] - a[1])[0];
-  ui.health = { ...parsed, day, suspicious: n >= 3 ? same : null };
+  ui.health = { ...parsed, day, suspicious: n >= 3 ? same : null, raw: String(text).slice(0, 2000) };
   render(); $('#sheet').scrollTop = 0;
 }
 
@@ -493,6 +493,7 @@ function viewHealthImport() {
       ${h.skipped.length ? `<p class="chk small">範囲外のため取り込まない:${esc(h.skipped.join('、'))}</p>` : ''}
       ${h.suspicious !== null ? `<div class="info"><h3>値がおかしいかもしれません</h3><p>種類の違う3つ以上の項目が、同じ数字(${esc(h.suspicious)})になっています。ショートカットがヘルスケアの種類を正しく読めていない可能性があります。ヘルスケアアプリの値と見比べてから取り込んでください。</p></div>` : ''}
       <p class="t-muted small">チェックインのほかの項目(鍛えた部位・睡眠休養感など)はそのまま残ります。測定は前回と同じ値なら追加しません。</p>
+      <details class="tip"><summary>読み取った元の文字</summary><pre class="tmpl">${esc(h.raw)}</pre></details>
       <button class="btn ${h.suspicious !== null ? '' : 'primary '}wide" data-action="health-apply">${h.suspicious !== null ? 'このまま取り込む' : '取り込む'}</button>
     </section>
   </div>`;
