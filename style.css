@@ -297,6 +297,26 @@ select {
 }
 .cmp tr.sec th { text-align: left; padding-top: 14px; color: var(--text-primary); font-size: 13px; }
 
+/* 自己評価・お知らせ・強み弱み */
+.info { border: 1px solid var(--warn-text); border-radius: 12px; padding: 12px; margin: 10px 0; }
+.card.info { border-color: var(--warn-text); }
+.info h3 { color: var(--warn-text); margin: 0 0 4px; font-size: 14px; }
+.info p { font-size: 14px; }
+.srow { padding: 10px 0 18px; border-bottom: 1px solid var(--border); }
+.srow:last-of-type { border-bottom: 0; }
+.srow-top { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.srow-top b { margin-left: auto; font-size: 18px; min-width: 2.4em; text-align: right; }
+.srow-top .state { margin-left: 4px; }
+.srow input[type=range] { width: 100%; margin: 10px 0 4px; accent-color: var(--accent); height: 28px; }
+.srow-scale { position: relative; height: 14px; margin: 0 10px; font-size: 11px; color: var(--text-muted); }
+.srow-scale span { position: absolute; transform: translateX(-50%); }
+.sw-box { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+.sw-box h4 { margin: 0 0 4px; font-size: 13px; color: var(--text-secondary); }
+.sw-box ul { list-style: none; margin: 0; padding: 0; font-size: 14px; }
+.sw-box li { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid var(--border); }
+.sw-box li:last-child { border-bottom: 0; }
+[hidden] { display: none !important; }
+
 /* フレンド */
 .fcard { margin-bottom: 8px; }
 .fcard-top { display: flex; gap: 12px; align-items: center; }

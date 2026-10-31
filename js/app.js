@@ -1,16 +1,16 @@
 import {
   SOURCES, MEASURES, MEASURE_GROUPS, PARTS, ABILITIES, CONDITIONS, TRAININGS, DRINKS, STANDUP_LEVELS,
-  RANKS, MAX_STEP, C_MINUS, NO_MEASURE_CEIL, THRESH, GAIN, GAIN_SOON, WEEK_CAP,
-  physicalStatus, conditionStatus, restState, rankLabel, letterOf, levelFromXp, testInfo,
+  RANKS, MAX_STEP, C_MINUS, NO_MEASURE_CEIL, THRESH, GAIN, GAIN_SOON, WEEK_CAP, SELF_MAX_STEP, SELF_DEFAULT_STEP,
+  physicalStatus, conditionStatus, restState, rankLabel, letterOf, levelFromXp, testInfo, strengthsWeaknesses,
   series, isoDate, lastDays, ageOf, bmiRange, waistLimit, stepsTarget, alcoholLimit, locomoTwoStep, locomoStandup,
 } from './standards.js';
 import { TIPS, PART_TIPS, QUIZ, QUIZ_CATS } from './content.js';
 import { radar, bodyMap, lineChart, barChart } from './charts.js';
 import { encodeCard, decodeCard, findCode, newId } from './share.js';
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 const KEY = 'sp-health-v1';
-const DEFAULT = { v: 1, profile: null, measures: [], daily: {}, quiz: {}, targets: {}, xp: 0, awarded: {}, me: null, friends: {} };
+const DEFAULT = { v: 1, profile: null, measures: [], daily: {}, quiz: {}, targets: {}, xp: 0, awarded: {}, me: null, friends: {}, selfInit: null, decayNotified: [] };
 
 // ---------- 保存 ----------
 
@@ -37,7 +37,7 @@ function status() {
 
 const ui = {
   tab: state.profile ? 'home' : 'settings', logMode: 'daily', logDate: isoDate(new Date()),
-  detail: null, quiz: null, friend: null, incoming: null,
+  detail: null, quiz: null, friend: null, incoming: null, setup: false,
 };
 // iPhoneではホーム画面のアプリとSafariで保存場所が別になる
 const standalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
@@ -104,6 +104,10 @@ const srcList = (keys) => (keys?.length
   : '');
 const tipList = (tips) => tips.map((t) => `<details class="tip"><summary>${esc(t.title)}</summary><p>${esc(t.body)}</p>${srcList(t.src)}</details>`).join('');
 
+// 自己評価する12項目(筋力の6部位と、筋力以外の6能力)
+const SELF_ITEMS = [...PARTS.map((p) => ({ ...p, group: 'part' })), ...ABILITIES.filter((a) => a.key !== 'strength').map((a) => ({ ...a, group: 'ability' }))];
+const DECAY_NOTE = '筋力の部位・持久力・柔軟性は5日、瞬発力・敏捷性・バランスは8日、歩く力は4日';
+
 // ---------- ステータス ----------
 
 function viewHome() {
@@ -134,6 +138,8 @@ function viewHome() {
     <div class="xpbar" role="progressbar" aria-valuemin="0" aria-valuemax="${lv.need}" aria-valuenow="${lv.into}"><i style="width:${(lv.into / lv.need) * 100}%"></i></div>
     <p class="t-muted">次のレベルまで ${lv.need - lv.into} XP ・ 連続記録 ${streak()} 日</p>
   </section>
+  ${state.selfInit ? '' : `<button class="card cta" data-action="setup-open">自己評価で、今の自分のランクを決めましょう <b>はじめる</b></button>`}
+  ${decayInfo(phys)}
   ${loggedToday ? '' : `<button class="card cta" data-action="tab" data-tab="log">今日のチェックインがまだです <b>記録する +20XP</b></button>`}
   <button class="card today-parts" data-action="detail" data-stat="strength">
     <h3>今日の部位</h3>
@@ -142,7 +148,8 @@ function viewHome() {
     ${groups.warn ? `<p><span class="state warn">要注意</span>${groups.warn.join('・')}</p>` : ''}
     ${!groups.good && !groups.rest && !groups.warn ? '<p class="t-muted">チェックインで鍛えた部位を記録すると、回復状況が表示されます</p>' : ''}
   </button>
-  <section class="card"><h3>身体能力</h3>${radar(axes, { refAt: pct(C_MINUS), refLabel: 'C−' })}<p class="t-muted center small">点線の輪がC−(これより上は休みすぎると減少)。項目をタップすると詳細</p></section>
+  <section class="card"><h3>身体能力</h3>${radar(axes, { refAt: pct(C_MINUS), refLabel: 'C−' })}<p class="t-muted center small">点線の輪がC−(これより上は休みすぎると減少)。項目をタップすると詳細</p>
+    ${swHtml(SELF_ITEMS.map((x) => ({ key: x.key, name: x.name, step: (x.group === 'part' ? phys.parts : phys.abilities)[x.key].step })))}</section>
   <section class="card list">
     ${ABILITIES.map((a) => {
       const s = phys.abilities[a.key];
@@ -164,6 +171,66 @@ function viewHome() {
     }).join('')}
   </section>
   <p class="t-muted center small">ランクと点数はゲーム用の目安で、医学的な判定ではありません。</p>`;
+}
+
+function swHtml(items) {
+  const sw = strengthsWeaknesses(items);
+  if (!sw) return '';
+  const li = (x) => `<li>${esc(x.name)} <b>${rankLabel(x.step)}</b></li>`;
+  return `<div class="sw-box"><div><h4>強み</h4><ul>${sw.top.map(li).join('')}</ul></div><div><h4>弱み</h4><ul>${sw.bottom.map(li).join('')}</ul></div></div>`;
+}
+
+// 新しく C− 以上になった項目があれば、休みすぎると減ることを知らせる
+function decayInfo(phys) {
+  const fresh = SELF_ITEMS.filter((x) => (x.group === 'part' ? phys.parts : phys.abilities)[x.key].rawStep >= C_MINUS && !state.decayNotified.includes(x.key));
+  if (!fresh.length) return '';
+  return `<section class="card info" role="note"><h3>お知らせ:C− からはポイントが減ることがあります</h3>
+    <p>${fresh.map((x) => esc(x.name)).join('・')} が C− 以上になりました。C− 以上の項目は、運動しない日が続くとポイントが減っていきます(${DECAY_NOTE}、鍛えない日が続くと始まります)。C− より下には減りません。</p>
+    <button class="btn wide" data-action="decay-ok" data-keys="${fresh.map((x) => x.key).join(',')}">わかった</button></section>`;
+}
+
+// ---------- 初期設定の自己評価 ----------
+
+function selfPreview(steps) {
+  const ab = (k) => (k === 'strength' ? Math.floor(PARTS.reduce((a, p) => a + steps[p.key], 0) / PARTS.length) : steps[k]);
+  const axes = ABILITIES.map((a) => ({ key: a.key, name: a.name, value: pct(ab(a.key)), label: rankLabel(ab(a.key)) }));
+  const decayN = SELF_ITEMS.filter((x) => steps[x.key] >= C_MINUS).length;
+  return `<h3>あなたのステータス</h3>${radar(axes, { interactive: false, refAt: pct(C_MINUS), refLabel: 'C−' })}
+    ${swHtml(SELF_ITEMS.map((x) => ({ key: x.key, name: x.name, step: steps[x.key] })))}
+    <p class="t-muted small center">${decayN ? `C− 以上(減少あり):${decayN}項目` : 'C− 以上の項目はありません(減少なし)'}</p>`;
+}
+
+function readSelfSteps() {
+  return Object.fromEntries(SELF_ITEMS.map((x) => [x.key, Number(document.querySelector(`[data-self="${x.key}"]`)?.value ?? SELF_DEFAULT_STEP)]));
+}
+
+function viewSetup() {
+  const S = status();
+  const cur = (x) => {
+    if (!state.selfInit || !S) return SELF_DEFAULT_STEP;
+    return Math.min(SELF_MAX_STEP, (x.group === 'part' ? S.phys.parts : S.phys.abilities)[x.key].step);
+  };
+  const steps = Object.fromEntries(SELF_ITEMS.map((x) => [x.key, cur(x)]));
+  const row = (x) => `<div class="srow">
+    <div class="srow-top"><span>${x.name}</span><span class="state warn" data-tag="${x.key}" ${steps[x.key] >= C_MINUS ? '' : 'hidden'}>減少あり</span><b data-out="${x.key}">${RANKS[steps[x.key]]}</b></div>
+    <input type="range" name="self_${x.key}" min="0" max="${SELF_MAX_STEP}" step="1" value="${steps[x.key]}" data-self="${x.key}" aria-label="${x.name}のランク">
+    <div class="srow-scale"><span style="left:0">G−</span><span style="left:${(C_MINUS / SELF_MAX_STEP) * 100}%">C−</span><span style="left:100%">${RANKS[SELF_MAX_STEP]}</span></div>
+  </div>`;
+  return `<div class="sheet" role="dialog" aria-label="自己評価">
+    <header class="sheet-head"><button class="btn ghost" data-action="setup-close">‹ 閉じる</button><h2>自己評価</h2><span></span></header>
+    <section class="card"><p>今の自分の体力を、項目ごとに <b>G− 〜 ${RANKS[SELF_MAX_STEP]}</b> で決めてください。ここで決めたランクからスタートします。</p>
+      <div class="info"><h3>C− 以上を選んだ項目について</h3>
+        <p>C− 以上の項目は、運動しない日が続くとポイントが減っていきます(${DECAY_NOTE}、鍛えない日が続くと始まります。今日から数えます)。C− より下には減りません。</p></div>
+      <p class="t-muted small">${RANKS[SELF_MAX_STEP]} より上へは、トレーニングを続け、測定で伸びを示すと上がっていきます。</p>
+    </section>
+    <section class="card" id="self-preview">${selfPreview(steps)}</section>
+    <form id="self-form" class="card form">
+      <h3>筋力(部位)</h3>${SELF_ITEMS.filter((x) => x.group === 'part').map(row).join('')}
+      <h3>そのほかの能力</h3>${SELF_ITEMS.filter((x) => x.group === 'ability').map(row).join('')}
+      <button class="btn primary wide" type="submit">この内容で始める</button>
+      ${state.selfInit ? '<p class="t-muted small">やり直しても、今のポイントより下がることはありません。</p>' : '<button type="button" class="btn wide" data-action="setup-skip">スキップ(すべて G− から始める)</button>'}
+    </form>
+  </div>`;
 }
 
 function rankScale() {
@@ -209,7 +276,7 @@ function viewStat(key) {
     if (tk === 'twostep' && state.profile.height) extra = `ロコモ度:${locomoTwoStep(t.latest / state.profile.height)}`;
     if (tk === 'standup') extra = `ロコモ度:${locomoStandup(t.latest)}`;
     return `<div class="part"><div class="part-top"><b>${m.label}</b><span>${esc(fmtMeasure(tk, t.latest))}</span><span class="part-score">天井 ${rankLabel(t.ceil)}</span></div>
-      <p class="t-muted">${esc(testInfo(tk, t.first, t.latest, state.profile))}${extra ? `。${extra}` : ''}</p>
+      <p class="t-muted">${esc(testInfo(tk, t.first, t.latest, state.profile, s.base))}${extra ? `。${extra}` : ''}</p>
       ${srcList([...(m.rule.type ? ['pa2013'] : []), ...(m.rule.type === 'vo2est' ? ['uth', 'tanaka'] : []), m.src, 'app'].filter(Boolean))}
       ${tk === 'standup' ? '' : lineChart({ pts: ser, unit: m.unit, id: `t-${tk}` })}</div>`;
   }).join('');
@@ -219,14 +286,15 @@ function viewStat(key) {
     <section class="card score-head">${badge(s.step, true)}<div>
       <p class="score-num">${rankLabel(s.step)}<small> ${Math.floor(s.pts)} pt</small></p>
       <p class="t-muted">${s.atCeil ? `天井(${rankLabel(s.ceil)})に到達。測定で伸びを示すと上がります` : next !== null ? `次の ${RANKS[s.step + 1]} まで あと ${Math.ceil(next - s.pts)} pt` : '最高ランクです'}</p>
-      <p><span class="state ${r.tone}">${r.label}</span> <span class="t-muted">${s.last ? `最後に鍛えた日 ${md(s.last)}(${s.since === 0 ? '今日' : `${s.since}日前`})` : 'まだ鍛えた記録がありません'}</span></p>
+      <p><span class="state ${r.tone}">${r.label}</span> <span class="t-muted">${s.last ? `最後に鍛えた日 ${md(s.last)}(${s.trainedSince === 0 ? '今日' : `${s.trainedSince}日前`})` : 'まだ鍛えた記録がありません'}</span></p>
+      ${s.self !== null ? `<p class="t-muted small">自己評価:${RANKS[s.self]}(${md(state.selfInit.date)})</p>` : ''}
     </div></section>
     <section class="card"><h3>直近4週間</h3><div class="strip" aria-label="直近28日の鍛えた日">${strip}</div>
       <p class="t-muted small strip-ends"><span>${md(lastDays(28)[0])}</span><span>今日</span></p>
       ${s.history.length > 1 ? `<h3>ポイントの推移</h3>${lineChart({ pts: s.history, unit: 'pt', id: `p-${key}`, dots: false, ref: next !== null && !s.atCeil ? { value: next, label: RANKS[s.step + 1] } : null })}` : ''}
     </section>
     <section class="card"><h3>測定と天井</h3>
-      <p class="t-muted">今の天井:<b>${rankLabel(s.ceil)}</b>(${measured.length ? '測定した項目のうち一番高いもの' : `未測定のため ${RANKS[NO_MEASURE_CEIL]}`})</p>
+      <p class="t-muted">今の天井:<b>${rankLabel(s.ceil)}</b>(${measured.length ? '測定した項目のうち一番高いもの' : `未測定のため ${RANKS[NO_MEASURE_CEIL]}`}${s.self !== null && s.self > NO_MEASURE_CEIL ? `。自己評価の ${RANKS[s.self]} までは測定なしでも認めます` : ''})</p>
       ${testsHtml}
       <button class="btn wide" data-action="log-for" data-mode="measure">測定する</button>
     </section>
@@ -535,6 +603,9 @@ function viewSettings() {
     <label class="field"><span>身長</span><span class="unit-in"><input type="number" name="height" inputmode="decimal" step="0.1" min="100" max="230" value="${val(p.height)}"><em>cm</em></span></label>
     <button class="btn primary wide" type="submit">保存する</button>
   </form>
+  ${state.profile ? `<section class="card"><h2>自己評価</h2>
+    <p class="t-muted">${state.selfInit ? `${md(state.selfInit.date)} に設定済み。やり直しても、今のポイントより下がることはありません。` : 'まだ設定していません。'}</p>
+    <button class="btn wide" data-action="setup-open">${state.selfInit ? '自己評価をやり直す' : '自己評価をする'}</button></section>` : ''}
   <section class="card"><h2>データ</h2>
     <p class="t-muted">記録はこのiPhoneのブラウザの中にだけあります。機種変更や削除に備えて、ときどき書き出してください。</p>
     <button class="btn wide" data-action="export">バックアップを書き出す</button>
@@ -545,6 +616,7 @@ function viewSettings() {
     <p class="small"><b>ランク</b>:G−からSSS+までの30段階。最初は上がりやすく、上に行くほど長い継続が必要です(週2回の継続で C− まで約3か月、A− まで約1年、S− まで約2年が目安)。</p>
     <p class="small"><b>ポイント</b>:鍛えた日に+${GAIN}pt。同じ項目を48時間以内に続けた日は回復途中として+${GAIN_SOON}pt。急に上がらないよう、7日間で最大${WEEK_CAP}ptまで。</p>
     <p class="small"><b>天井</b>:ランクは測定結果で決まる上限を超えません。測定していない項目は ${RANKS[NO_MEASURE_CEIL]} まで。持久力は公的な基準値、そのほかは初回の測定値(C+)からの伸びで天井が上がります。</p>
+    <p class="small"><b>自己評価</b>:最初に各項目を G− 〜 ${RANKS[SELF_MAX_STEP]} で自己評価し、そのランクからスタートします。自己評価のランクまでは測定なしでも認め、自己基準の測定はそのランクを起点に数えます。</p>
     <p class="small"><b>減少</b>:C− 以上の項目は、最後に鍛えてから一定の日数(筋力の部位・持久力・柔軟性は5日、瞬発力・敏捷性・バランスは8日、歩く力は4日)たつと、C− を超えた分の1%ずつ毎日減ります。C− より下にはなりません。</p>
     <p class="small"><b>コンディション</b>(からだ・回復力・生活習慣・薬学知識):今の状態を0〜100点で評価し、A+ までのランクで表示します。</p>
     <p class="t-muted small">ランク・ポイントはゲーム用の約束ごとで、医学的な判定ではありません。</p>
@@ -559,7 +631,7 @@ function viewSettings() {
 function render() {
   const views = { home: viewHome, log: viewLog, learn: viewLearn, friends: viewFriends, settings: viewSettings };
   $('#main').innerHTML = views[ui.tab]();
-  const sheet = ui.incoming ? viewIncoming() : ui.friend ? viewFriend(ui.friend) : ui.detail && status() ? viewDetail(ui.detail) : '';
+  const sheet = ui.incoming ? viewIncoming() : ui.setup && state.profile ? viewSetup() : ui.friend ? viewFriend(ui.friend) : ui.detail && status() ? viewDetail(ui.detail) : '';
   $('#sheet').innerHTML = sheet;
   document.body.classList.toggle('sheet-open', !!sheet);
   document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === ui.tab));
@@ -581,6 +653,16 @@ const actions = {
     render();
   },
   friend: (el) => { ui.friend = el.dataset.id; render(); $('#sheet').scrollTop = 0; },
+  'setup-open': () => { ui.setup = true; render(); $('#sheet').scrollTop = 0; },
+  'setup-close': () => { ui.setup = false; render(); },
+  'setup-skip': () => {
+    state.selfInit = { date: today(), steps: {} };
+    ui.setup = false; save(); toast('スキップしました。設定タブからいつでも自己評価できます'); go('home');
+  },
+  'decay-ok': (el) => {
+    state.decayNotified = [...new Set([...state.decayNotified, ...el.dataset.keys.split(',')])];
+    save(); render();
+  },
   'del-friend': (el) => {
     const f = state.friends[el.dataset.id];
     if (!f || !confirm(`${f.n}さんをフレンドから外しますか?`)) return;
@@ -662,6 +744,16 @@ document.addEventListener('click', (e) => {
   if (el && actions[el.dataset.action]) { e.preventDefault(); actions[el.dataset.action](el); }
 });
 
+// 自己評価のスライダーを動かしたら、ラベルとプレビューをその場で更新する
+document.addEventListener('input', (e) => {
+  const key = e.target.dataset?.self;
+  if (!key) return;
+  const v = Number(e.target.value);
+  document.querySelector(`[data-out="${key}"]`).textContent = RANKS[v];
+  document.querySelector(`[data-tag="${key}"]`).hidden = v < C_MINUS;
+  $('#self-preview').innerHTML = selfPreview(readSelfSteps());
+});
+
 document.addEventListener('change', (e) => {
   if (e.target.dataset.action === 'log-date') { ui.logDate = e.target.value || today(); render(); }
   if (e.target.id === 'import-file') importFile(e.target.files[0]);
@@ -677,7 +769,7 @@ document.addEventListener('submit', (e) => {
       const first = !state.profile;
       state.profile = { sex: f.get('sex'), birthYear: Number(f.get('birthYear')), height: num(f.get('height')) };
       save(); toast('保存しました');
-      if (first) go('home'); else render();
+      if (first) { ui.setup = true; go('home'); } else render();
       break;
     }
     case 'daily-form': {
@@ -702,6 +794,14 @@ document.addEventListener('submit', (e) => {
       state.measures.push(...added);
       const xp = gainXp(30, `m:${date}`);
       save(); toast(xp ? `${added.length}件保存 +${xp}XP` : `${added.length}件保存しました`); render();
+      break;
+    }
+    case 'self-form': {
+      const steps = Object.fromEntries(SELF_ITEMS.map((x) => [x.key, Math.max(0, Math.min(SELF_MAX_STEP, Number(f.get(`self_${x.key}`)) || 0))]));
+      state.selfInit = { date: today(), steps };
+      // 自己評価の画面で減少のことは案内済み
+      state.decayNotified = [...new Set([...state.decayNotified, ...SELF_ITEMS.filter((x) => steps[x.key] >= C_MINUS).map((x) => x.key)])];
+      ui.setup = false; save(); toast('自己評価を保存しました'); go('home');
       break;
     }
     case 'nick-form': {

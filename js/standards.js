@@ -52,6 +52,8 @@ export const MAX_STEP = RANKS.length - 1; // 29 = SSS+
 export const C_MINUS = 12; // これ以上で減少ルールが働く
 export const NO_MEASURE_CEIL = 11; // 測定していない項目の天井 = D+
 export const SELF_BASE_CEIL = 14; // 自己基準の初回測定 = C+
+export const SELF_MAX_STEP = 16; // 初期設定の自己評価で選べる上限 = B
+export const SELF_DEFAULT_STEP = 10; // 自己評価の初期値 = D
 
 // 次の段階に上がるのに必要なポイント。週2回(20pt/週)で C−まで約3か月、A−まで約1年、S−まで約2年
 const COSTS = [10, 10, 10, 15, 15, 15, 20, 20, 20, 40, 40, 40, 80, 80, 80, 180, 180, 180, 350, 350, 350, 500, 500, 500, 600, 600, 600, 700, 700];
@@ -256,26 +258,28 @@ export const DRINKS = [
 
 // ---------- 天井(測定で決まる上限ランク) ----------
 
-export function testCeil(key, first, latest, age, sex) {
+// base:自己基準の初回測定の段階(自己評価が C+ より高ければ、その段階から数える)
+export function testCeil(key, first, latest, age, sex, base = SELF_BASE_CEIL) {
   const r = MEASURES[key].rule;
   if (r.type === 'vo2' || r.type === 'vo2est') {
     const v = r.type === 'vo2' ? latest : vo2FromRhr(latest, age);
     // 基準値で B+、1.5 ml/kg/分(約0.4 METs)ごとに1段階
     return clampStep(17 + Math.trunc((v - vo2Ref(sex, age).ml) / 1.5), 3);
   }
-  if (r.pct) return first > 0 ? clampStep(SELF_BASE_CEIL + Math.trunc((latest - first) / first / r.pct + 1e-9), 6) : SELF_BASE_CEIL;
-  if (r.abs) return clampStep(SELF_BASE_CEIL + Math.trunc((latest - first) / r.abs + 1e-9), 6);
-  if (r.level) return clampStep(SELF_BASE_CEIL + r.level * (latest - first), 6);
+  if (r.pct) return first > 0 ? clampStep(base + Math.trunc((latest - first) / first / r.pct + 1e-9), 6) : base;
+  if (r.abs) return clampStep(base + Math.trunc((latest - first) / r.abs + 1e-9), 6);
+  if (r.level) return clampStep(base + r.level * (latest - first), 6);
   return NO_MEASURE_CEIL;
 }
 
-export function testInfo(key, first, latest, profile) {
+export function testInfo(key, first, latest, profile, base = SELF_BASE_CEIL) {
   const r = MEASURES[key].rule;
+  const b = RANKS[base];
   if (r.type === 'vo2') return `基準 ${vo2Ref(profile.sex, ageOf(profile)).ml.toFixed(1)} で B+、1.5 ごとに1段階`;
   if (r.type === 'vo2est') return `推定VO2max ${vo2FromRhr(latest, ageOf(profile)).toFixed(1)}(Uth式)。基準 ${vo2Ref(profile.sex, ageOf(profile)).ml.toFixed(1)} で B+`;
-  if (r.pct) return `自己基準:初回 ${first} で C+、${Math.round(r.pct * 100)}%伸びるごとに1段階`;
-  if (r.abs) return `自己基準:初回 ${first} で C+、${Math.abs(r.abs)}cm ${r.abs > 0 ? '伸びる' : '縮まる'}ごとに1段階`;
-  if (r.level) return `自己基準:初回「${STANDUP_LEVELS[first]}」で C+、1つ低い台ごとに${r.level}段階`;
+  if (r.pct) return `自己基準:初回 ${first} で ${b}、${Math.round(r.pct * 100)}%伸びるごとに1段階`;
+  if (r.abs) return `自己基準:初回 ${first} で ${b}、${Math.abs(r.abs)}cm ${r.abs > 0 ? '伸びる' : '縮まる'}ごとに1段階`;
+  if (r.level) return `自己基準:初回「${STANDUP_LEVELS[first]}」で ${b}、1つ低い台ごとに${r.level}段階`;
   return '';
 }
 
@@ -294,17 +298,22 @@ function replay(def, st, days, age, sers) {
   const sex = st.profile.sex;
   const idx = Object.fromEntries(def.tests.map((k) => [k, 0]));
   const gainBase = def.gain ?? GAIN;
-  let pts = 0; let last = null; let ceil = NO_MEASURE_CEIL;
+  // 初期設定の自己評価:その日に自己評価のランクのポイントから始め、減少の日数もその日から数える
+  const self = st.selfInit?.steps?.[def.key] ?? null;
+  const selfIdx = self === null ? -1 : days.indexOf(st.selfInit.date);
+  const base = Math.max(SELF_BASE_CEIL, self ?? 0);
+  let pts = 0; let last = null; let anchor = null; let ceil = NO_MEASURE_CEIL;
   const gains = []; const history = [];
   days.forEach((d, i) => {
+    if (i === selfIdx) { pts = Math.max(pts, THRESH[self]); anchor = i; }
     // その日までの測定で天井を決める
     const ceils = [];
     for (const k of def.tests) {
       const s = sers[k];
       while (idx[k] < s.length && s[idx[k]].date <= d) idx[k]++;
-      if (idx[k] > 0) ceils.push(testCeil(k, s[0].value, s[idx[k] - 1].value, age, sex));
+      if (idx[k] > 0) ceils.push(testCeil(k, s[0].value, s[idx[k] - 1].value, age, sex, base));
     }
-    ceil = ceils.length ? Math.max(...ceils) : NO_MEASURE_CEIL;
+    ceil = Math.max(ceils.length ? Math.max(...ceils) : NO_MEASURE_CEIL, selfIdx >= 0 && i >= selfIdx ? self : 0);
     const cap = ceil >= MAX_STEP ? Infinity : THRESH[ceil + 1] - 1e-6;
 
     if (trainedOn(def, st.daily[d], age)) {
@@ -312,8 +321,8 @@ function replay(def, st, days, age, sers) {
       const week = gains.filter((x) => x.i > i - 7).reduce((s, x) => s + x.g, 0);
       g = Math.max(0, Math.min(g, WEEK_CAP - week, cap - pts));
       if (g > 0) { pts += g; gains.push({ i, g }); }
-      last = i;
-    } else if (last !== null && i - last >= def.decayDay && pts > THRESH[C_MINUS]) {
+      last = i; anchor = i;
+    } else if (anchor !== null && i - anchor >= def.decayDay && pts > THRESH[C_MINUS]) {
       pts -= DECAY_RATE * (pts - THRESH[C_MINUS]);
     }
     history.push({ date: d, value: Math.round(pts * 10) / 10 });
@@ -322,24 +331,26 @@ function replay(def, st, days, age, sers) {
   const n = days.length - 1;
   const rawStep = stepOfPoints(pts);
   const step = Math.min(rawStep, ceil);
-  const since = last === null ? null : n - last;
+  // since:減少の判定に使う日数(最後に鍛えた日か自己評価の日から)。trainedSince:実際に鍛えてからの日数
+  const since = anchor === null ? null : n - anchor;
+  const trainedSince = last === null ? null : n - last;
   const decaying = since !== null && since >= def.decayDay && rawStep >= C_MINUS;
   return {
     key: def.key, name: def.name, pts, step, ceil, rawStep, decayDay: def.decayDay,
     atCeil: rawStep >= ceil && ceil < MAX_STEP,
-    last: last === null ? null : days[last], since, decaying,
+    last: last === null ? null : days[last], since, trainedSince, decaying, self, base,
     recent: days.slice(-28).map((d) => trainedOn(def, st.daily[d], age)),
     history: history.slice(-120),
     tests: def.tests.filter((k) => sers[k].length).map((k) => ({
       key: k, first: sers[k][0].value, latest: sers[k].at(-1).value,
-      ceil: testCeil(k, sers[k][0].value, sers[k].at(-1).value, age, sex),
+      ceil: testCeil(k, sers[k][0].value, sers[k].at(-1).value, age, sex, base),
     })),
   };
 }
 
 export function physicalStatus(st, today = isoDate(new Date())) {
   const age = ageOf(st.profile);
-  const all = [...Object.keys(st.daily), ...st.measures.map((m) => m.date)].filter((d) => d <= today).sort();
+  const all = [...Object.keys(st.daily), ...st.measures.map((m) => m.date), ...(st.selfInit ? [st.selfInit.date] : [])].filter((d) => d <= today).sort();
   const start = all[0] ?? today;
   const days = [];
   for (let d = parseIso(start); isoDate(d) <= today; d.setDate(d.getDate() + 1)) days.push(isoDate(d));
@@ -363,11 +374,20 @@ export function physicalStatus(st, today = isoDate(new Date())) {
 export function restState(s) {
   if (s.since === null) return { label: '未記録', tone: 'muted' };
   if (s.decaying) return { label: '減少中', tone: 'bad' };
-  if (s.since < 2 && !ABILITIES.find((a) => a.key === s.key)?.noSoon) return { label: '回復中', tone: 'rest' };
+  if (s.trainedSince !== null && s.trainedSince < 2 && !ABILITIES.find((a) => a.key === s.key)?.noSoon) return { label: '回復中', tone: 'rest' };
   const left = s.decayDay - s.since;
   if (s.rawStep >= C_MINUS && left <= 2) return { label: `あと${left}日で減少`, tone: 'warn' };
   if (s.since >= s.decayDay) return { label: `${s.since}日休み`, tone: 'muted' };
   return { label: '鍛えどき', tone: 'good' };
+}
+
+// 強み・弱み:身体能力6項目と筋力の6部位(計12)を段階の高い順・低い順に並べる
+export function strengthsWeaknesses(items, n = 3) {
+  const sorted = [...items].sort((a, b) => b.step - a.step);
+  if (!sorted.length || sorted[0].step === sorted.at(-1).step) return null;
+  const top = sorted.slice(0, n).filter((x) => x.step > sorted.at(-1).step);
+  const bottom = sorted.slice(-n).reverse().filter((x) => x.step < sorted[0].step);
+  return { top, bottom };
 }
 
 // ---------- コンディション(0〜100点 → A+ までのランク) ----------
