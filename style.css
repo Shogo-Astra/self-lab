@@ -331,6 +331,15 @@ select {
 .modal { max-width: 480px; max-height: 100%; overflow-y: auto; margin: 0; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3); }
 .modal h3 { margin-top: 14px; color: var(--text-primary); }
 
+/* ヘルスケア連携 */
+.health-top { display: flex; justify-content: space-between; align-items: baseline; }
+.health-top h3 { margin: 0; color: var(--text-primary); }
+.health textarea { margin-bottom: 0; }
+.guide { padding-left: 20px; font-size: 14px; }
+.guide li { margin-bottom: 10px; }
+.guide b { display: block; }
+.tmpl { background: var(--surface-0); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; font-size: 13px; overflow-x: auto; }
+
 /* フレンド */
 .fcard { margin-bottom: 8px; }
 .fcard-top { display: flex; gap: 12px; align-items: center; }

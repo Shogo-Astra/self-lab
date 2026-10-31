@@ -9,10 +9,11 @@ import { TIPS, PART_TIPS, QUIZ, QUIZ_CATS } from './content.js';
 import { radar, bodyMap, lineChart, barChart } from './charts.js';
 import { encodeCard, decodeCard, findCode, newId, upgradeParts } from './share.js';
 import { CHANGELOG, isNewer } from './changelog.js';
+import { HEALTH_KEYS, HEALTH_TEMPLATE, parseHealth } from './health.js';
 
 const VERSION = CHANGELOG[0].version;
 const KEY = 'sp-health-v1';
-const DEFAULT = { v: 1, profile: null, measures: [], daily: {}, quiz: {}, targets: {}, xp: 0, awarded: {}, me: null, friends: {}, selfInit: null, decayNotified: [], seenVersion: null };
+const DEFAULT = { v: 1, profile: null, measures: [], daily: {}, quiz: {}, targets: {}, xp: 0, awarded: {}, me: null, friends: {}, selfInit: null, decayNotified: [], seenVersion: null, healthLast: null };
 
 // ---------- 保存 ----------
 
@@ -39,7 +40,7 @@ function status() {
 
 const ui = {
   tab: state.profile ? 'home' : 'settings', logMode: 'daily', logDate: isoDate(new Date()),
-  detail: null, quiz: null, friend: null, incoming: null, setup: false,
+  detail: null, quiz: null, friend: null, incoming: null, setup: false, health: null, healthGuide: false,
 };
 // iPhoneではホーム画面のアプリとSafariで保存場所が別になる
 const standalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
@@ -446,10 +447,120 @@ function viewMeasure() {
     <button class="btn ghost small" data-action="del-measure" data-id="${esc(r.id)}" aria-label="削除">削除</button></div>`).join('')}</div></section>` : ''}`;
 }
 
+// ---------- ヘルスケア連携 ----------
+
+function healthCard() {
+  return `<section class="card health">
+    <div class="health-top"><h3>ヘルスケアから取り込む</h3>${state.healthLast ? `<small class="t-muted">前回 ${md(state.healthLast.at)}</small>` : ''}</div>
+    <p class="t-muted small">ショートカットでコピーした歩数・睡眠などを取り込みます。</p>
+    <button class="btn primary wide" data-action="health-clip">コピーした値を取り込む</button>
+    <details class="tip"><summary>うまく取り込めないとき</summary>
+      <form id="health-form"><textarea name="text" rows="4" placeholder="ショートカットがコピーした文字を、ここに貼り付け"></textarea>
+      <button class="btn wide" type="submit">貼り付けた文字から取り込む</button></form></details>
+    <button class="btn ghost" data-action="health-guide">ショートカットの作り方</button>
+  </section>`;
+}
+
+function startHealthImport(text) {
+  const parsed = parseHealth(text);
+  if (!parsed) { toast('Self Lab用のデータが見つかりませんでした'); return; }
+  if (!Object.keys(parsed.values).length) { toast(parsed.skipped.length ? '取り込める値がありませんでした(範囲外の値のみ)' : '取り込める値がありませんでした'); return; }
+  const day = parsed.day && parsed.day <= today() ? parsed.day : today();
+  ui.health = { ...parsed, day };
+  render(); $('#sheet').scrollTop = 0;
+}
+
+function viewHealthImport() {
+  const h = ui.health;
+  const cur = state.daily[h.day] ?? {};
+  const rows = Object.entries(h.values).map(([k, v]) => {
+    const def = HEALTH_KEYS[k];
+    const before = def.to === 'daily' ? cur[def.field] : null;
+    return `<div class="row static"><span class="row-name">${def.label}<small>${def.to === 'daily' ? 'チェックイン' : '測定'}</small></span>
+      <span class="row-sub">${before !== undefined && before !== null && before !== v ? `今 ${esc(before)} →` : ''}</span>
+      <span class="row-val">${esc(v.toLocaleString())} ${def.unit}</span></div>`;
+  }).join('');
+  return `<div class="sheet" role="dialog" aria-label="ヘルスケアから取り込む">
+    <header class="sheet-head"><button class="btn ghost" data-action="health-close">‹ 閉じる</button><h2>取り込み</h2><span></span></header>
+    <section class="card form">
+      <label class="field"><span>日付<small>${h.day === today() ? '今日' : md(h.day)}のチェックインと測定に入ります</small></span>
+        <input type="date" value="${h.day}" max="${today()}" data-action="health-day"></label>
+      <div class="list">${rows}</div>
+      ${h.skipped.length ? `<p class="chk small">範囲外のため取り込まない:${esc(h.skipped.join('、'))}</p>` : ''}
+      <p class="t-muted small">チェックインのほかの項目(鍛えた部位・睡眠休養感など)はそのまま残ります。測定は前回と同じ値なら追加しません。</p>
+      <button class="btn primary wide" data-action="health-apply">取り込む</button>
+    </section>
+  </div>`;
+}
+
+function applyHealth() {
+  const { day, values } = ui.health;
+  const row = { ...(state.daily[day] ?? {}) };
+  const isNewDay = !state.daily[day];
+  let dailyN = 0; let measureN = 0;
+  for (const [k, v] of Object.entries(values)) {
+    const def = HEALTH_KEYS[k];
+    if (def.to === 'daily') {
+      if (v === 0 && row[def.field]) continue; // 0 で手入力の値を消さない
+      if (row[def.field] !== v) { row[def.field] = v; dailyN++; }
+    } else {
+      const sameDay = state.measures.find((m) => m.key === def.field && m.date === day);
+      if (sameDay) { if (sameDay.value !== v) { sameDay.value = v; measureN++; } continue; }
+      const latest = series(state.measures, def.field).at(-1);
+      if (latest && latest.value === v) continue; // 前回と同じ値(ヘルスケア側が更新されていない)
+      state.measures.push({ id: `${Date.now().toString(36)}-${def.field}`, key: def.field, date: day, value: v, t: Date.now() });
+      measureN++;
+    }
+  }
+  let xp = 0;
+  if (dailyN) { state.daily[day] = row; if (isNewDay) xp += gainXp(20, `d:${day}`); }
+  if (measureN) xp += gainXp(30, `m:${day}`);
+  state.healthLast = { at: today(), day };
+  ui.health = null; save();
+  toast(dailyN + measureN ? `${dailyN + measureN}件取り込みました${xp ? ` +${xp}XP` : ''}` : '新しい値はありませんでした');
+  go('home');
+}
+
+function viewHealthGuide() {
+  const step = (n, title, body) => `<li><b>${title}</b>${body}</li>`;
+  return `<div class="sheet" role="dialog" aria-label="ショートカットの作り方">
+    <header class="sheet-head"><button class="btn ghost" data-action="health-guide-close">‹ 戻る</button><h2>作り方</h2><span></span></header>
+    <section class="card"><h3>しくみ</h3>
+      <p class="small">Webアプリはヘルスケアを直接読めないため、iPhoneの「ショートカット」アプリが値を読み出してコピーし、Self Labがそれを取り込みます。データはiPhoneの中でコピーされるだけで、外には送られません。</p>
+      <p class="small">夜(寝る前)に実行すると、その日の歩数・エクササイズ時間と、前の晩の睡眠時間がその日の記録に入ります。</p>
+      <p class="t-muted small">iOSのバージョンによって、項目の名前が少し違うことがあります。</p>
+    </section>
+    <section class="card"><h3>ショートカットを作る(最初の1回だけ)</h3><ol class="guide">
+      ${step(1, '新しいショートカットを作る', '「ショートカット」アプリを開き、右上の「+」をタップ。名前は「Self Lab 取り込み」など。')}
+      ${step(2, '歩数', '「ヘルスケアサンプルを検索」を追加し、条件を「種類が歩数」「開始日が今日」にする。続けて「統計を計算」を追加して「合計」にし、「変数を設定」で名前を「歩数」にする。')}
+      ${step(3, 'エクササイズ時間', '2と同じ手順で、種類を「エクササイズ時間」にして合計し、変数「運動」にする。')}
+      ${step(4, '睡眠時間', '「ヘルスケアサンプルを検索」で「種類が睡眠分析」「終了日が今日」にし、値が「ベッド内」でも「覚醒」でもないもの(睡眠中・コア・深い・レム)に絞る。続けて「ヘルスケアサンプルの詳細を取得」で「継続時間」を選び、「統計を計算」で合計して、変数「睡眠」にする。')}
+      ${step(5, '安静時心拍・VO2max・体重・体脂肪率・血圧', 'それぞれ「ヘルスケアサンプルを検索」で種類(安静時心拍数/最大酸素摂取量/体重/体脂肪率/収縮期血圧/拡張期血圧)を選び、「並べ替え:開始日(新しい順)」「制限:1」にして変数を設定する。使わない項目は作らなくて大丈夫。')}
+      ${step(6, '日付', '「日付をフォーマット」を追加し、日付を「現在の日付」、形式を「カスタム」にして「yyyy-MM-dd」と入れ、変数「日付」にする。')}
+      ${step(7, '取り込み用の文字', '「テキスト」を追加し、下の「雛形をコピー」で写した文字を貼り付ける。各行の「=」のうしろに、対応する変数を入れる(day=日付、steps=歩数、sleep=睡眠、exercise=運動、rhr=安静時心拍 …)。')}
+      ${step(8, 'コピーする', '「クリップボードにコピー」を追加する。必要なら「通知を表示」で「Self Labを開いて取り込んでください」と出す。')}
+      ${step(9, '一度実行する', 'ヘルスケアへのアクセスを聞かれたら「許可」する。')}
+    </ol>
+    <pre class="tmpl">${esc(HEALTH_TEMPLATE)}</pre>
+    <button class="btn wide" data-action="health-template">雛形をコピー</button></section>
+    <section class="card"><h3>毎日自動で実行する</h3>
+      <p class="small">ショートカットアプリの「オートメーション」タブで新規作成し、「時刻」(例:毎日22:30)を選んで「すぐに実行」にし、作ったショートカットを選びます。iPhoneがロック中だとヘルスケアを読めないことがあるので、寝る前に手動で実行する方法も確実です。</p>
+    </section>
+    <section class="card"><h3>Self Labに取り込む</h3>
+      <p class="small">記録タブの「コピーした値を取り込む」をタップし、「ペースト」を許可します。内容を確かめて「取り込む」を押せば完了です。</p>
+    </section>
+    <section class="card"><h3>うまくいかないとき</h3><ul class="ex">
+      <li>睡眠時間が実際の2倍くらいになる:睡眠を複数のアプリ(Apple WatchとiPhoneなど)が記録しています。4の条件に「ソースが(使っている機器)」を加えてください。</li>
+      <li>「データが見つかりません」と出る:テキストの1行目が「SELFLAB」になっているか確かめてください。</li>
+      <li>友人に配る:作ったショートカットの共有ボタンから「iCloudリンクをコピー」で送れます。受け取った人は作らずに使えます。</li>
+    </ul></section>
+  </div>`;
+}
+
 function viewLog() {
   if (!state.profile) return viewHome();
   return `<div class="seg big">${[['daily', '今日のチェックイン'], ['measure', '測定']].map(([k, l]) => `<button class="${ui.logMode === k ? 'on' : ''}" data-action="log-mode" data-mode="${k}">${l}</button>`).join('')}</div>
-    ${ui.logMode === 'daily' ? viewDaily() : viewMeasure()}`;
+    ${ui.logMode === 'daily' ? healthCard() + viewDaily() : viewMeasure()}`;
 }
 
 // ---------- 学ぶ ----------
@@ -627,6 +738,9 @@ function viewSettings() {
   ${state.profile ? `<section class="card"><h2>自己評価</h2>
     <p class="t-muted">${state.selfInit ? `${md(state.selfInit.date)} に設定済み。やり直しても、今のポイントより下がることはありません。` : 'まだ設定していません。'}</p>
     <button class="btn wide" data-action="setup-open">${state.selfInit ? '自己評価をやり直す' : '自己評価をする'}</button></section>` : ''}
+  <section class="card"><h2>ヘルスケア連携</h2>
+    <p class="t-muted">iPhoneの「ショートカット」を使って、歩数・睡眠・エクササイズ時間・安静時心拍・VO2max・体重・体脂肪率・血圧を取り込めます。${state.healthLast ? `前回の取り込み:${md(state.healthLast.at)}` : ''}</p>
+    <button class="btn wide" data-action="health-guide">ショートカットの作り方</button></section>
   <section class="card"><h2>データ</h2>
     <p class="t-muted">記録はこのiPhoneのブラウザの中にだけあります。機種変更や削除に備えて、ときどき書き出してください。</p>
     <button class="btn wide" data-action="export">バックアップを書き出す</button>
@@ -682,7 +796,7 @@ function changelogSection() {
 function render() {
   const views = { home: viewHome, log: viewLog, learn: viewLearn, friends: viewFriends, settings: viewSettings };
   $('#main').innerHTML = views[ui.tab]();
-  const sheet = ui.incoming ? viewIncoming() : ui.setup && state.profile ? viewSetup() : ui.friend ? viewFriend(ui.friend) : ui.detail && status() ? viewDetail(ui.detail) : '';
+  const sheet = ui.incoming ? viewIncoming() : ui.health ? viewHealthImport() : ui.healthGuide ? viewHealthGuide() : ui.setup && state.profile ? viewSetup() : ui.friend ? viewFriend(ui.friend) : ui.detail && status() ? viewDetail(ui.detail) : '';
   $('#sheet').innerHTML = sheet;
   const notes = ui.incoming ? [] : unseenNotes();
   $('#modal').innerHTML = notes.length ? viewWhatsNew(notes) : '';
@@ -706,6 +820,21 @@ const actions = {
     render();
   },
   friend: (el) => { ui.friend = el.dataset.id; render(); $('#sheet').scrollTop = 0; },
+  'health-clip': async () => {
+    try {
+      startHealthImport(await navigator.clipboard.readText());
+    } catch {
+      toast('クリップボードを読めませんでした。「うまく取り込めないとき」から貼り付けてください');
+      const det = document.querySelector('.health details'); if (det) det.open = true;
+    }
+  },
+  'health-apply': () => applyHealth(),
+  'health-close': () => { ui.health = null; render(); },
+  'health-guide': () => { ui.healthGuide = true; render(); $('#sheet').scrollTop = 0; },
+  'health-guide-close': () => { ui.healthGuide = false; render(); },
+  'health-template': async () => {
+    try { await navigator.clipboard.writeText(HEALTH_TEMPLATE); toast('雛形をコピーしました'); } catch { toast('コピーできませんでした。上の文字を長押ししてコピーしてください'); }
+  },
   'whats-new-ok': () => { state.seenVersion = VERSION; save(); render(); },
   'setup-open': () => { ui.setup = true; render(); $('#sheet').scrollTop = 0; },
   'setup-close': () => { ui.setup = false; render(); },
@@ -810,6 +939,7 @@ document.addEventListener('input', (e) => {
 
 document.addEventListener('change', (e) => {
   if (e.target.dataset.action === 'log-date') { ui.logDate = e.target.value || today(); render(); }
+  if (e.target.dataset.action === 'health-day' && ui.health) { ui.health.day = e.target.value && e.target.value <= today() ? e.target.value : today(); render(); }
   if (e.target.id === 'import-file') importFile(e.target.files[0]);
 });
 
@@ -849,6 +979,10 @@ document.addEventListener('submit', (e) => {
       state.measures.push(...added);
       const xp = gainXp(30, `m:${date}`);
       save(); toast(xp ? `${added.length}件保存 +${xp}XP` : `${added.length}件保存しました`); render();
+      break;
+    }
+    case 'health-form': {
+      startHealthImport(f.get('text'));
       break;
     }
     case 'self-form': {
