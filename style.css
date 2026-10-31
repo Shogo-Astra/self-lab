@@ -16,6 +16,8 @@
   --good-text: #006300;
   --critical: #d03b3b;
   --warn-text: #8a5a00;
+  --rk-0: #cde2fb; --rk-1: #b7d3f6; --rk-2: #9ec5f4; --rk-3: #86b6ef; --rk-4: #6da7ec;
+  --rk-5: #5598e7; --rk-6: #3987e5; --rk-7: #256abf; --rk-8: #184f95; --rk-9: #0d366b;
   --radius: 16px;
   --tabbar: 64px;
 }
@@ -35,6 +37,8 @@
     --accent: #3987e5;
     --good-text: #4cc94c;
     --warn-text: #e8b44a;
+    --rk-0: #104281; --rk-1: #184f95; --rk-2: #1c5cab; --rk-3: #256abf; --rk-4: #2a78d6;
+    --rk-5: #3987e5; --rk-6: #5598e7; --rk-7: #6da7ec; --rk-8: #9ec5f4; --rk-9: #cde2fb;
   }
 }
 
@@ -92,7 +96,7 @@ small { font-size: 12px; }
 
 .list .row {
   display: grid;
-  grid-template-columns: 36px 1fr 90px 34px;
+  grid-template-columns: 48px 1fr 70px 44px;
   align-items: center;
   gap: 10px;
   width: 100%;
@@ -114,13 +118,14 @@ small { font-size: 12px; }
 
 .badge {
   display: inline-grid; place-items: center;
-  width: 32px; height: 32px; border-radius: 10px;
-  font-weight: 800; font-size: 16px;
+  min-width: 36px; height: 32px; padding: 0 4px; border-radius: 10px;
+  font-weight: 800; font-size: 14px; letter-spacing: -0.02em; white-space: nowrap;
   border: 1.5px solid var(--border); color: var(--text-secondary);
 }
-.badge.r-S, .badge.r-A { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.badge.r-B { border-color: var(--accent); color: var(--accent); }
-.badge.big { width: 64px; height: 64px; font-size: 32px; border-radius: 18px; flex: none; }
+.badge.lv-4, .badge.lv-5 { border-color: var(--accent); color: var(--accent); }
+.badge.lv-6 { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.badge.lv-7, .badge.lv-8, .badge.lv-9 { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); box-shadow: 0 0 0 2px var(--surface-1), 0 0 0 4px var(--accent); }
+.badge.big { min-width: 72px; height: 64px; font-size: 26px; border-radius: 18px; flex: none; }
 
 /* グラフ */
 .chart { display: block; width: 100%; height: auto; overflow: visible; }
@@ -240,14 +245,66 @@ input[type=date] { min-height: 46px; }
 .srcs li { margin-bottom: 6px; }
 .srcs small { display: block; color: var(--text-muted); }
 
+/* 回復状況・人体図 */
+.state { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; border: 1px solid currentColor; margin-left: 6px; vertical-align: 1px; }
+.state.good { color: var(--good-text); }
+.state.rest { color: var(--accent); }
+.state.warn { color: var(--warn-text); }
+.state.bad { color: var(--critical); }
+.state.muted { color: var(--text-muted); }
+.row-name .state { margin-left: 6px; }
+.today-parts { cursor: pointer; }
+.today-parts h3 { margin: 0 0 4px; }
+.today-parts p { font-size: 14px; margin: 4px 0; }
+.today-parts .state { margin: 0 8px 0 0; }
+.bodymap { max-width: 340px; margin: 0 auto; }
+.bodymap .bm-part { stroke: var(--surface-1); stroke-width: 2; cursor: pointer; }
+.bodymap .bm-head { fill: var(--grid); }
+.bm-none { fill: var(--grid); background: var(--grid); }
+.bm-0 { fill: var(--rk-0); background: var(--rk-0); }
+.bm-1 { fill: var(--rk-1); background: var(--rk-1); }
+.bm-2 { fill: var(--rk-2); background: var(--rk-2); }
+.bm-3 { fill: var(--rk-3); background: var(--rk-3); }
+.bm-4 { fill: var(--rk-4); background: var(--rk-4); }
+.bm-5 { fill: var(--rk-5); background: var(--rk-5); }
+.bm-6 { fill: var(--rk-6); background: var(--rk-6); }
+.bm-7 { fill: var(--rk-7); background: var(--rk-7); }
+.bm-8 { fill: var(--rk-8); background: var(--rk-8); }
+.bm-9 { fill: var(--rk-9); background: var(--rk-9); }
+.rk-scale { display: flex; justify-content: center; gap: 2px; margin: 6px 0 2px; }
+.rk-scale span { display: flex; flex-direction: column; align-items: center; font-size: 10px; color: var(--text-muted); width: 28px; }
+.rk-scale i { display: block; width: 26px; height: 10px; border-radius: 3px; margin-bottom: 2px; }
+.strip { display: grid; grid-template-columns: repeat(28, 1fr); gap: 2px; }
+.strip i { height: 18px; border-radius: 3px; background: var(--grid); }
+.strip i.on { background: var(--series-1); }
+.strip-ends { display: flex; justify-content: space-between; margin-top: 2px; }
+.ex { margin: 0 0 8px; padding-left: 20px; font-size: 14px; }
+
+/* トレーニングの選択・測定の折りたたみ */
+.toggles { display: flex; flex-wrap: wrap; gap: 6px; }
+.tg input { position: absolute; opacity: 0; pointer-events: none; }
+.tg span { display: inline-block; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-0); font-weight: 600; font-size: 15px; cursor: pointer; }
+.tg input:checked + span { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.tg input:checked + span::before { content: '✓ '; }
+.tg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mgroup { border-top: 1px solid var(--border); padding: 10px 0; }
+.mgroup summary { font-weight: 700; font-size: 15px; color: var(--text-secondary); cursor: pointer; padding: 4px 0 8px; }
+.mgroup[open] summary { color: var(--text-primary); }
+.for { font-size: 11px; font-weight: 600; color: var(--accent); border: 1px solid var(--accent); border-radius: 6px; padding: 0 5px; margin-left: 6px; }
+select {
+  font: inherit; font-size: 17px; width: 100%; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface-0); color: var(--text-primary);
+}
+.cmp tr.sec th { text-align: left; padding-top: 14px; color: var(--text-primary); font-size: 13px; }
+
 /* フレンド */
 .fcard { margin-bottom: 8px; }
 .fcard-top { display: flex; gap: 12px; align-items: center; }
 .fcard-top b { font-size: 17px; }
-.mini { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; margin-top: 10px; }
+.mini { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; margin-top: 10px; }
 .mini span { display: flex; flex-direction: column; align-items: center; padding: 6px 0; border: 1px solid var(--border); border-radius: 10px; }
-.mini small { font-size: 11px; color: var(--text-muted); }
-.mini b { font-size: 16px; font-variant-numeric: tabular-nums; }
+.mini small { font-size: 10px; color: var(--text-muted); white-space: nowrap; }
+.mini b { font-size: 14px; white-space: nowrap; }
 .list .row-sub { color: var(--text-secondary); font-size: 14px; text-align: right; }
 .legend { display: flex; justify-content: center; gap: 18px; font-size: 13px; color: var(--text-secondary); }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
