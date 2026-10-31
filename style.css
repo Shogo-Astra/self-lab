@@ -259,7 +259,7 @@ input[type=date] { min-height: 46px; }
 .today-parts .state { margin: 0 8px 0 0; }
 .bodymap { max-width: 340px; margin: 0 auto; }
 .bodymap .bm-part { stroke: var(--surface-1); stroke-width: 2; cursor: pointer; }
-.bodymap .bm-head { fill: var(--grid); }
+.bodymap .bm-head, .bodymap .bm-off { fill: var(--grid); }
 .bm-none { fill: var(--grid); background: var(--grid); }
 .bm-0 { fill: var(--rk-0); background: var(--rk-0); }
 .bm-1 { fill: var(--rk-1); background: var(--rk-1); }
@@ -277,6 +277,9 @@ input[type=date] { min-height: 46px; }
 .strip { display: grid; grid-template-columns: repeat(28, 1fr); gap: 2px; }
 .strip i { height: 18px; border-radius: 3px; background: var(--grid); }
 .strip i.on { background: var(--series-1); }
+.strip i.half { background: color-mix(in srgb, var(--series-1) 45%, var(--grid)); }
+.sw-half { background: color-mix(in srgb, var(--series-1) 45%, var(--grid)); }
+.cmp.eff td, .cmp.eff th { text-align: left; font-size: 13px; vertical-align: top; }
 .strip-ends { display: flex; justify-content: space-between; margin-top: 2px; }
 .ex { margin: 0 0 8px; padding-left: 20px; font-size: 14px; }
 

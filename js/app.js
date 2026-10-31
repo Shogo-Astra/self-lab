@@ -2,11 +2,12 @@ import {
   SOURCES, MEASURES, MEASURE_GROUPS, PARTS, ABILITIES, CONDITIONS, TRAININGS, DRINKS, STANDUP_LEVELS,
   RANKS, MAX_STEP, C_MINUS, NO_MEASURE_CEIL, THRESH, GAIN, GAIN_SOON, WEEK_CAP, SELF_MAX_STEP, SELF_DEFAULT_STEP,
   physicalStatus, conditionStatus, restState, rankLabel, letterOf, levelFromXp, testInfo, strengthsWeaknesses,
+  TRAINING_EFFECTS, RELATED, LEG_KEYS, sourcesOf,
   series, isoDate, lastDays, ageOf, bmiRange, waistLimit, stepsTarget, alcoholLimit, locomoTwoStep, locomoStandup,
 } from './standards.js';
 import { TIPS, PART_TIPS, QUIZ, QUIZ_CATS } from './content.js';
 import { radar, bodyMap, lineChart, barChart } from './charts.js';
-import { encodeCard, decodeCard, findCode, newId } from './share.js';
+import { encodeCard, decodeCard, findCode, newId, upgradeParts } from './share.js';
 import { CHANGELOG, isNewer } from './changelog.js';
 
 const VERSION = CHANGELOG[0].version;
@@ -108,6 +109,21 @@ const tipList = (tips) => tips.map((t) => `<details class="tip"><summary>${esc(t
 // 自己評価する12項目(筋力の6部位と、筋力以外の6能力)
 const SELF_ITEMS = [...PARTS.map((p) => ({ ...p, group: 'part' })), ...ABILITIES.filter((a) => a.key !== 'strength').map((a) => ({ ...a, group: 'ability' }))];
 const DECAY_NOTE = '筋力の部位・持久力・柔軟性は5日、瞬発力・敏捷性・バランスは8日、歩く力は4日';
+
+const targetName = (k) => (PARTS.find((p) => p.key === k) ?? ABILITIES.find((a) => a.key === k))?.name ?? k;
+const trainingName = (k) => TRAININGS.find((t) => t.key === k)?.label ?? k;
+
+// トレーニングと、ポイントが入る項目の関係(直接=全部、関係=半分)
+function effectsTable() {
+  return `<table class="cmp eff"><thead><tr><th>トレーニング</th><th>全部(+${GAIN}pt)</th><th>半分(+${GAIN * RELATED}pt)</th></tr></thead><tbody>
+    ${Object.entries(TRAINING_EFFECTS).map(([t, eff]) => {
+      const full = Object.keys(eff).filter((k) => eff[k] === 1).map(targetName);
+      const half = Object.keys(eff).filter((k) => eff[k] < 1).map(targetName);
+      return `<tr><td>${trainingName(t)}</td><td>${full.join('・')}</td><td>${half.join('・') || '—'}</td></tr>`;
+    }).join('')}
+  </tbody></table>
+  <p class="t-muted small">息が弾む運動の分数を入れた日は「有酸素」、歩数が目安以上の日は「歩く力」に全部(歩く力は+3pt)入ります。同じ日に同じ項目へ複数のトレーニングから入るときは、一番大きい分だけが入ります。</p>`;
+}
 
 // ---------- ステータス ----------
 
@@ -265,8 +281,10 @@ function viewStat(key) {
   const s = isPart ? phys.parts[k] : phys.abilities[k];
   const r = restState(s);
   const next = s.step < MAX_STEP ? THRESH[s.step + 1] : null;
-  const gainNote = def.key === 'walk' ? `目安の歩数(${stepsTarget(ageOf(state.profile)).toLocaleString()}歩)に届いた日に+${def.gain}pt` : `鍛えた日に+${GAIN}pt(前回から48時間以内は+${GAIN_SOON}pt)`;
-  const strip = s.recent.map((on, i) => `<i class="${on ? 'on' : ''}" title="${md(lastDays(28)[i])}"></i>`).join('');
+  const src = sourcesOf(def.key);
+  const full = def.key === 'walk' ? `目安の歩数(${stepsTarget(ageOf(state.profile)).toLocaleString()}歩)に届いた日に+${def.gain}pt` : `${src.direct.map(trainingName).join('・')}をした日に+${GAIN}pt(前回から48時間以内は+${GAIN_SOON}pt)`;
+  const gainNote = `${full}${src.related.length ? `。${src.related.map(trainingName).join('・')}をした日にはその半分` : ''}`;
+  const strip = s.recent.map((w, i) => `<i class="${w >= 1 ? 'on' : w > 0 ? 'half' : ''}" title="${md(lastDays(28)[i])}"></i>`).join('');
   const measured = s.tests.map((t) => t.key);
   const testsHtml = def.tests.map((tk) => {
     const m = MEASURES[tk];
@@ -285,13 +303,14 @@ function viewStat(key) {
   return `<div class="sheet" role="dialog" aria-label="${def.name}の詳細">
     <header class="sheet-head"><button class="btn ghost" data-action="close">‹ 戻る</button><h2>${def.name}</h2><span></span></header>
     <section class="card score-head">${badge(s.step, true)}<div>
-      <p class="score-num">${rankLabel(s.step)}<small> ${Math.floor(s.pts)} pt</small></p>
+      <p class="score-num">${rankLabel(s.step)}<small> ${Math.round(s.pts)} pt</small></p>
       <p class="t-muted">${s.atCeil ? `天井(${rankLabel(s.ceil)})に到達。測定で伸びを示すと上がります` : next !== null ? `次の ${RANKS[s.step + 1]} まで あと ${Math.ceil(next - s.pts)} pt` : '最高ランクです'}</p>
       <p><span class="state ${r.tone}">${r.label}</span> <span class="t-muted">${s.last ? `最後に鍛えた日 ${md(s.last)}(${s.trainedSince === 0 ? '今日' : `${s.trainedSince}日前`})` : 'まだ鍛えた記録がありません'}</span></p>
       ${s.self !== null ? `<p class="t-muted small">自己評価:${RANKS[s.self]}(${md(state.selfInit.date)})</p>` : ''}
     </div></section>
     <section class="card"><h3>直近4週間</h3><div class="strip" aria-label="直近28日の鍛えた日">${strip}</div>
       <p class="t-muted small strip-ends"><span>${md(lastDays(28)[0])}</span><span>今日</span></p>
+      <p class="t-muted small"><i class="sw sw-1"></i> 直接鍛えた日 <i class="sw sw-half"></i> 関係するトレーニングの日(半分)</p>
       ${s.history.length > 1 ? `<h3>ポイントの推移</h3>${lineChart({ pts: s.history, unit: 'pt', id: `p-${key}`, dots: false, ref: next !== null && !s.atCeil ? { value: next, label: RANKS[s.step + 1] } : null })}` : ''}
     </section>
     <section class="card"><h3>測定と天井</h3>
@@ -380,14 +399,15 @@ const val = (v) => (v === undefined || v === null ? '' : esc(v));
 
 function viewDaily() {
   const d = state.daily[ui.logDate] ?? {};
-  const trained = new Set(d.trained ?? []);
+  const trained = new Set((d.trained ?? []).flatMap((t) => (t === 'leg' ? LEG_KEYS : [t])));
   const toggle = (t) => `<label class="tg"><input type="checkbox" name="trained" value="${t.key}" ${trained.has(t.key) ? 'checked' : ''}><span>${t.label}</span></label>`;
   return `<form id="daily-form" class="card form" autocomplete="off">
     <label class="field"><span>日付</span><input type="date" name="date" value="${ui.logDate}" max="${today()}" data-action="log-date"></label>
     <h3>トレーニング</h3>
     <div class="field"><span>鍛えた部位</span><div class="toggles">${TRAININGS.filter((t) => t.kind === 'part').map(toggle).join('')}</div></div>
     <div class="field"><span>そのほかのトレーニング</span><div class="toggles">${TRAININGS.filter((t) => t.kind === 'other').map(toggle).join('')}</div>
-      <small class="t-muted">息が弾む運動の分数を入れた日は「有酸素」、歩数が目安以上の日は「歩く力」も自動で記録されます</small></div>
+      <small class="t-muted">息が弾む運動の分数を入れた日は「有酸素」、歩数が目安以上の日は「歩く力」も自動で記録されます</small>
+      <details class="tip"><summary>どの能力にポイントが入る?</summary>${effectsTable()}</details></div>
     <label class="field"><span>息が弾む運動</span><span class="unit-in"><input type="number" name="exMin" inputmode="numeric" min="0" value="${val(d.exMin)}" placeholder="0"><em>分</em></span></label>
     <label class="field"><span>歩数</span><span class="unit-in"><input type="number" name="steps" inputmode="numeric" min="0" value="${val(d.steps)}" placeholder="8000"><em>歩</em></span></label>
     <h3>回復</h3>
@@ -481,7 +501,7 @@ function viewLearn() {
 function myCard() {
   const { phys, cond } = status();
   return {
-    v: 2, id: state.me.id, n: state.me.nick, d: today(), lv: levelFromXp(state.xp).level, ov: phys.overallStep,
+    v: 3, id: state.me.id, n: state.me.nick, d: today(), lv: levelFromXp(state.xp).level, ov: phys.overallStep,
     a: ABILITIES.map((a) => phys.abilities[a.key].step), p: PARTS.map((p) => phys.parts[p.key].step),
     c: CONDITIONS.map((c) => cond[c.key].step), sk: streak(),
   };
@@ -496,7 +516,7 @@ function daysAgo(iso) {
 }
 
 function cardSummary(c) {
-  if (c.v !== 2) return `<div class="fcard"><b>${esc(c.n)}</b><p class="t-muted">${OLD_CARD}</p></div>`;
+  if (c.v < 2) return `<div class="fcard"><b>${esc(c.n)}</b><p class="t-muted">${OLD_CARD}</p></div>`;
   return `<div class="fcard">
     <div class="fcard-top">${badge(c.ov)}
       <div><b>${esc(c.n)}</b><p class="t-muted">Lv.${c.lv} ・ 総合 ${rankLabel(c.ov)} ・ 連続記録 ${c.sk}日 ・ ${md(c.d)}時点</p></div></div>
@@ -529,10 +549,10 @@ function viewFriends() {
   </form>
   <section class="card list"><h2>フレンド</h2>
     ${friends.length ? friends.map((f) => `<button class="row" data-action="friend" data-id="${esc(f.id)}">
-      ${f.v === 2 ? badge(f.ov) : '<span class="badge lv-none">?</span>'}
-      <span class="row-name">${esc(f.n)}<small>${f.v === 2 ? daysAgo(f.d) : '送り直してもらう'}</small></span>
+      ${f.v >= 2 ? badge(f.ov) : '<span class="badge lv-none">?</span>'}
+      <span class="row-name">${esc(f.n)}<small>${f.v >= 2 ? daysAgo(f.d) : '送り直してもらう'}</small></span>
       <span class="row-sub">Lv.${f.lv}</span>
-      <span class="row-val">${f.v === 2 ? rankLabel(f.ov) : '—'}</span></button>`).join('')
+      <span class="row-val">${f.v >= 2 ? rankLabel(f.ov) : '—'}</span></button>`).join('')
     : '<p class="t-muted">まだいません。友人にカードを送ってもらい、上の欄に貼り付けてください。</p>'}
   </section>`;
 }
@@ -540,7 +560,7 @@ function viewFriends() {
 function compareTable(mine, f) {
   const rows = (title, defs, a, b) => `<tr class="sec"><th colspan="3">${title}</th></tr>${defs.map((d, i) => `<tr><td>${d.name}</td><td>${rankLabel(a[i])}</td><td>${rankLabel(b[i])}</td></tr>`).join('')}`;
   return `<table class="cmp"><thead><tr><th></th><th>自分</th><th>${esc(f.n)}</th></tr></thead><tbody>
-    ${rows('身体能力', ABILITIES, mine.a, f.a)}${rows('部位', PARTS, mine.p, f.p)}${rows('コンディション', CONDITIONS, mine.c, f.c)}
+    ${rows('身体能力', ABILITIES, mine.a, f.a)}${rows('部位', PARTS, mine.p, upgradeParts(f.p))}${rows('コンディション', CONDITIONS, mine.c, f.c)}
   </tbody></table>`;
 }
 
@@ -549,7 +569,7 @@ function viewFriend(id) {
   if (!f) return '';
   const head = `<header class="sheet-head"><button class="btn ghost" data-action="close">‹ 戻る</button><h2>${esc(f.n)}</h2><span></span></header>`;
   const remove = `<button class="btn danger wide" data-action="del-friend" data-id="${esc(f.id)}">フレンドから外す</button>`;
-  if (f.v !== 2) return `<div class="sheet" role="dialog">${head}<section class="card">${cardSummary(f)}</section>${remove}</div>`;
+  if (f.v < 2) return `<div class="sheet" role="dialog">${head}<section class="card">${cardSummary(f)}</section>${remove}</div>`;
   const mine = state.profile && state.me?.id ? myCard() : { a: ABILITIES.map(() => null), p: PARTS.map(() => null), c: CONDITIONS.map(() => null) };
   const axes = ABILITIES.map((a, i) => ({ key: a.key, name: a.name, value: pct(mine.a[i]), label: rankLabel(mine.a[i]) }));
   return `<div class="sheet" role="dialog" aria-label="${esc(f.n)}との比較">${head}
@@ -582,7 +602,7 @@ function viewIncoming() {
 function addFriend(card) {
   if (card.id === state.me?.id) { toast('これは自分のカードです'); return false; }
   const known = state.friends[card.id];
-  if (known?.v === 2 && known.d > card.d) { toast('もっと新しいカードを登録済みです'); return false; }
+  if (known?.v >= 2 && known.d > card.d) { toast('もっと新しいカードを登録済みです'); return false; }
   state.friends[card.id] = { ...card, added: known?.added ?? today() };
   save(); toast(known ? `${card.n}さんのカードを更新しました` : `${card.n}さんを追加しました`);
   return true;
@@ -618,6 +638,8 @@ function viewSettings() {
     <p class="small"><b>ランク</b>:G−からSSS+までの30段階。最初は上がりやすく、上に行くほど長い継続が必要です(週2回の継続で C− まで約3か月、A− まで約1年、S− まで約2年が目安)。</p>
     <p class="small"><b>ポイント</b>:鍛えた日に+${GAIN}pt。同じ項目を48時間以内に続けた日は回復途中として+${GAIN_SOON}pt。急に上がらないよう、7日間で最大${WEEK_CAP}ptまで。</p>
     <p class="small"><b>天井</b>:ランクは測定結果で決まる上限を超えません。測定していない項目は ${RANKS[NO_MEASURE_CEIL]} まで。持久力は公的な基準値、そのほかは初回の測定値(C+)からの伸びで天井が上がります。</p>
+    <p class="small"><b>トレーニングと能力</b>:脚や体幹の筋トレは、関係する能力にも半分のポイントが入ります。ジャンプなどの練習も、関係する部位に半分入ります。</p>
+    <details class="tip"><summary>トレーニングと能力の関係</summary>${effectsTable()}</details>
     <p class="small"><b>自己評価</b>:最初に各項目を G− 〜 ${RANKS[SELF_MAX_STEP]} で自己評価し、そのランクからスタートします。自己評価のランクまでは測定なしでも認め、自己基準の測定はそのランクを起点に数えます。</p>
     <p class="small"><b>減少</b>:C− 以上の項目は、最後に鍛えてから一定の日数(筋力の部位・持久力・柔軟性は5日、瞬発力・敏捷性・バランスは8日、歩く力は4日)たつと、C− を超えた分の1%ずつ毎日減ります。C− より下にはなりません。</p>
     <p class="small"><b>コンディション</b>(からだ・回復力・生活習慣・薬学知識):今の状態を0〜100点で評価し、A+ までのランクで表示します。</p>

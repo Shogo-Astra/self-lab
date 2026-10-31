@@ -78,13 +78,14 @@ export function bodyMap(parts) {
       ? shape('chest', `<rect x="${cx - 30}" y="58" width="60" height="42" rx="12" />`)
         + shape('abs', `<rect x="${cx - 24}" y="104" width="48" height="56" rx="10" />`)
       : shape('back', `<rect x="${cx - 30}" y="58" width="60" height="102" rx="12" />`);
-    const hips = side === 'back' ? shape('leg', `<rect x="${cx - 28}" y="164" width="56" height="30" rx="14" />`) : '';
-    const legTop = side === 'back' ? 198 : 166;
+    const hips = side === 'back' ? shape('glute', `<rect x="${cx - 28}" y="164" width="56" height="30" rx="14" />`) : '';
+    // すね(前の下腿)は部位に含めないので色を付けない
+    const shins = [`<rect x="${cx - 24}" y="240" width="20" height="62" rx="10" class="bm-off" />`, `<rect x="${cx + 4}" y="240" width="20" height="62" rx="10" class="bm-off" />`].join('');
     return `<circle cx="${cx}" cy="30" r="18" class="bm-head" />
       ${shape('shoulder', `<circle cx="${cx - 40}" cy="70" r="14" />`)}${shape('shoulder', `<circle cx="${cx + 40}" cy="70" r="14" />`)}
       ${torso}${hips}
       ${limbs('arm', 36, 86, 16, 52)}${limbs('arm', 40, 142, 14, 50)}
-      ${limbs('leg', 2, legTop, 25, side === 'back' ? 58 : 70)}${limbs('leg', 4, side === 'back' ? 260 : 240, 20, side === 'back' ? 50 : 62)}
+      ${side === 'front' ? `${limbs('quad', 2, 166, 25, 70)}${shins}` : `${limbs('ham', 2, 198, 25, 58)}${limbs('calf', 4, 260, 20, 50)}`}
       <text x="${cx}" y="326" text-anchor="middle" class="t-sub">${side === 'front' ? '前' : '後ろ'}</text>`;
   };
   return `<svg viewBox="0 0 340 334" class="chart bodymap" role="img" aria-label="部位ごとのランクの人体図">

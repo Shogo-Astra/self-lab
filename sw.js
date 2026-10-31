@@ -1,5 +1,5 @@
 // オフラインで動かすためのキャッシュ。ファイルを変えたら CACHE の番号を上げる
-const CACHE = 'self-lab-v5';
+const CACHE = 'self-lab-v6';
 const FILES = [
   './', 'index.html', 'style.css', 'manifest.webmanifest',
   'js/app.js', 'js/standards.js', 'js/content.js', 'js/charts.js', 'js/share.js', 'js/changelog.js',

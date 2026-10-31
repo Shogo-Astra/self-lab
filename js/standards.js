@@ -82,19 +82,24 @@ export const PARTS = [
   { key: 'chest', name: '胸', tests: ['pushup'], decayDay: 5 },
   { key: 'abs', name: '腹', tests: ['situp30', 'plank'], decayDay: 5 },
   { key: 'back', name: '背中', tests: ['backhold'], decayDay: 5 },
-  { key: 'leg', name: 'お尻・脚', tests: ['chair30', 'wallsit'], decayDay: 5 },
+  { key: 'glute', name: 'お尻', tests: ['hiplift'], decayDay: 5 },
+  { key: 'quad', name: '太もも前', tests: ['chair30', 'wallsit'], decayDay: 5 },
+  { key: 'ham', name: '太もも裏', tests: ['hiplift'], decayDay: 5 },
+  { key: 'calf', name: 'ふくらはぎ', tests: ['calfraise'], decayDay: 5 },
 ];
 export const PART_KEYS = PARTS.map((p) => p.key);
+// v0.5.0 までの「お尻・脚」(leg)は、4つの脚の部位すべてとして扱う
+export const LEG_KEYS = ['glute', 'quad', 'ham', 'calf'];
 
 // decayDay:最後に鍛えた日から数えて、この日数たつと減少が始まる
 export const ABILITIES = [
   { key: 'strength', name: '筋力', short: '筋力' },
-  { key: 'endurance', name: '持久力', short: '持久', tests: ['vo2max', 'rhr'], train: 'cardio', decayDay: 5 },
-  { key: 'flex', name: '柔軟性', short: '柔軟', tests: ['sitreach', 'shoulder'], train: 'flex', decayDay: 5 },
-  { key: 'power', name: '瞬発力', short: '瞬発', tests: ['broadjump'], train: 'power', decayDay: 8 },
-  { key: 'agility', name: '敏捷性', short: '敏捷', tests: ['sidestep'], train: 'agility', decayDay: 8 },
-  { key: 'balance', name: 'バランス', short: 'バランス', tests: ['balanceClosed', 'balanceOpen'], train: 'balance', decayDay: 8 },
-  { key: 'walk', name: '歩く力', short: '歩く', tests: ['twostep', 'standup'], train: 'walk', decayDay: 4, gain: 3, noSoon: true },
+  { key: 'endurance', name: '持久力', short: '持久', tests: ['vo2max', 'rhr'], decayDay: 5 },
+  { key: 'flex', name: '柔軟性', short: '柔軟', tests: ['sitreach', 'shoulder'], decayDay: 5 },
+  { key: 'power', name: '瞬発力', short: '瞬発', tests: ['broadjump'], decayDay: 8 },
+  { key: 'agility', name: '敏捷性', short: '敏捷', tests: ['sidestep'], decayDay: 8 },
+  { key: 'balance', name: 'バランス', short: 'バランス', tests: ['balanceClosed', 'balanceOpen'], decayDay: 8 },
+  { key: 'walk', name: '歩く力', short: '歩く', tests: ['twostep', 'standup'], decayDay: 4, gain: 3, noSoon: true },
 ];
 
 export const CONDITIONS = [
@@ -104,6 +109,26 @@ export const CONDITIONS = [
   { key: 'knowledge', name: '薬学知識' },
 ];
 export const CONDITION_MAX_STEP = 20; // コンディションは今の状態の評価なので A+ まで
+
+// トレーニング1回の効果の配り先。1=その項目に全部、0.5=関係する項目に半分(2026-10-31 ユーザーと決定)。
+// 同じ日に同じ項目へ複数のトレーニングから配られるときは、合計せず一番大きい値をとる。数値はゲーム用の約束ごと
+export const RELATED = 0.5;
+export const TRAINING_EFFECTS = {
+  arm: { arm: 1 },
+  shoulder: { shoulder: 1 },
+  chest: { chest: 1 },
+  abs: { abs: 1, balance: RELATED },
+  back: { back: 1, balance: RELATED },
+  glute: { glute: 1, power: RELATED, walk: RELATED, balance: RELATED },
+  quad: { quad: 1, power: RELATED, endurance: RELATED, walk: RELATED },
+  ham: { ham: 1, power: RELATED, agility: RELATED },
+  calf: { calf: 1, power: RELATED, agility: RELATED, walk: RELATED },
+  cardio: { endurance: 1 },
+  flex: { flex: 1 },
+  power: { power: 1, calf: RELATED, quad: RELATED },
+  agility: { agility: 1, calf: RELATED, ham: RELATED, endurance: RELATED },
+  balance: { balance: 1, abs: RELATED },
+};
 
 // 毎日のチェックインで選ぶトレーニング
 export const TRAININGS = [
@@ -131,8 +156,10 @@ export const MEASURES = {
   situp30: { label: '上体起こし(30秒)', unit: '回', step: 1, group: 'strength', for: '腹', rule: { pct: 0.05 }, src: 'shintairyoku', hint: '仰向けで膝を90度に曲げ、腕を胸の前で組む。両肘が太ももにつくまで起こした回数' },
   plank: { label: 'プランク', unit: '秒', step: 1, group: 'strength', for: '腹', rule: { pct: 0.1 }, hint: '肘とつま先で体をまっすぐ保てた時間' },
   backhold: { label: '背筋の保持', unit: '秒', step: 1, group: 'strength', for: '背中', rule: { pct: 0.1 }, hint: 'うつ伏せで両腕を前に伸ばし、胸と脚を床から浮かせて保てた時間' },
-  chair30: { label: '30秒椅子立ち上がり', unit: '回', step: 1, group: 'strength', for: 'お尻・脚', rule: { pct: 0.1 }, hint: '腕を胸の前で組み、30秒で立ち座りした回数' },
-  wallsit: { label: '空気椅子', unit: '秒', step: 1, group: 'strength', for: 'お尻・脚', rule: { pct: 0.1 }, hint: '壁に背をつけ、膝を90度に曲げて保てた時間' },
+  hiplift: { label: '片脚ヒップリフト', unit: '回', step: 1, group: 'strength', for: 'お尻・太もも裏', rule: { pct: 0.1 }, hint: '仰向けで片膝を立て、もう片脚を伸ばして浮かせたまま、お尻を上げ下げした回数(左右の少ない方)' },
+  chair30: { label: '30秒椅子立ち上がり', unit: '回', step: 1, group: 'strength', for: '太もも前', rule: { pct: 0.1 }, hint: '腕を胸の前で組み、30秒で立ち座りした回数' },
+  wallsit: { label: '空気椅子', unit: '秒', step: 1, group: 'strength', for: '太もも前', rule: { pct: 0.1 }, hint: '壁に背をつけ、膝を90度に曲げて保てた時間' },
+  calfraise: { label: '片脚かかと上げ', unit: '回', step: 1, group: 'strength', for: 'ふくらはぎ', rule: { pct: 0.1 }, hint: '壁に軽く手を添え、片脚でかかとをできるだけ高く上げ下げした回数(左右の少ない方)' },
   sitreach: { label: '長座体前屈', unit: 'cm', step: 0.5, group: 'flex', rule: { abs: 1.5 }, src: 'shintairyoku', signed: true, hint: '壁に背とお尻をつけて長座し、床に置いた箱を前屈して押し出せた距離' },
   shoulder: { label: '背中で手を近づける', unit: 'cm', step: 0.5, group: 'flex', rule: { abs: -1.5 }, src: 'sft', signed: true, hint: '片手は肩の上から、もう片方は腰から背中に回し、中指どうしのすき間(重なったらマイナス)。左右の良い方' },
   broadjump: { label: '立ち幅とび', unit: 'cm', step: 1, group: 'power', rule: { pct: 0.02 }, src: 'shintairyoku', hint: '両足で踏み切り、踏み切り線から着地したかかとまでの距離' },
@@ -285,13 +312,25 @@ export function testInfo(key, first, latest, profile, base = SELF_BASE_CEIL) {
 
 // ---------- 身体能力:日ごとにポイントを再計算する ----------
 
-function trainedOn(def, row, age) {
-  if (!row) return false;
-  const key = def.train ?? def.key;
-  if (row.trained?.includes(key)) return true;
-  if (key === 'cardio' && Number(row.exMin) > 0) return true;
-  if (key === 'walk' && Number(row.steps) >= stepsTarget(age)) return true;
-  return false;
+const expandTrained = (row) => (row.trained ?? []).flatMap((t) => (t === 'leg' ? LEG_KEYS : [t]));
+
+// その日、この項目がどれだけ鍛えられたか(0・0.5・1)
+export function weightOn(key, row, age) {
+  if (!row) return 0;
+  let w = 0;
+  for (const t of expandTrained(row)) w = Math.max(w, TRAINING_EFFECTS[t]?.[key] ?? 0);
+  if (Number(row.exMin) > 0) w = Math.max(w, TRAINING_EFFECTS.cardio[key] ?? 0);
+  if (key === 'walk' && Number(row.steps) >= stepsTarget(age)) w = 1;
+  return w;
+}
+
+// この項目にポイントが入るトレーニング(直接/関係)
+export function sourcesOf(key) {
+  const direct = []; const related = [];
+  for (const [t, eff] of Object.entries(TRAINING_EFFECTS)) {
+    if (eff[key] === 1) direct.push(t); else if (eff[key]) related.push(t);
+  }
+  return { direct, related };
 }
 
 function replay(def, st, days, age, sers) {
@@ -299,7 +338,8 @@ function replay(def, st, days, age, sers) {
   const idx = Object.fromEntries(def.tests.map((k) => [k, 0]));
   const gainBase = def.gain ?? GAIN;
   // 初期設定の自己評価:その日に自己評価のランクのポイントから始め、減少の日数もその日から数える
-  const self = st.selfInit?.steps?.[def.key] ?? null;
+  const steps0 = st.selfInit?.steps ?? {};
+  const self = steps0[def.key] ?? (LEG_KEYS.includes(def.key) ? steps0.leg : undefined) ?? null;
   const selfIdx = self === null ? -1 : days.indexOf(st.selfInit.date);
   const base = Math.max(SELF_BASE_CEIL, self ?? 0);
   let pts = 0; let last = null; let anchor = null; let ceil = NO_MEASURE_CEIL;
@@ -316,8 +356,9 @@ function replay(def, st, days, age, sers) {
     ceil = Math.max(ceils.length ? Math.max(...ceils) : NO_MEASURE_CEIL, selfIdx >= 0 && i >= selfIdx ? self : 0);
     const cap = ceil >= MAX_STEP ? Infinity : THRESH[ceil + 1] - 1e-6;
 
-    if (trainedOn(def, st.daily[d], age)) {
-      let g = !def.noSoon && last !== null && i - last < 2 ? GAIN_SOON : gainBase;
+    const w = weightOn(def.key, st.daily[d], age);
+    if (w > 0) {
+      let g = w * (!def.noSoon && last !== null && i - last < 2 ? GAIN_SOON : gainBase);
       const week = gains.filter((x) => x.i > i - 7).reduce((s, x) => s + x.g, 0);
       g = Math.max(0, Math.min(g, WEEK_CAP - week, cap - pts));
       if (g > 0) { pts += g; gains.push({ i, g }); }
@@ -339,7 +380,7 @@ function replay(def, st, days, age, sers) {
     key: def.key, name: def.name, pts, step, ceil, rawStep, decayDay: def.decayDay,
     atCeil: rawStep >= ceil && ceil < MAX_STEP,
     last: last === null ? null : days[last], since, trainedSince, decaying, self, base,
-    recent: days.slice(-28).map((d) => trainedOn(def, st.daily[d], age)),
+    recent: days.slice(-28).map((d) => weightOn(def.key, st.daily[d], age)),
     history: history.slice(-120),
     tests: def.tests.filter((k) => sers[k].length).map((k) => ({
       key: k, first: sers[k][0].value, latest: sers[k].at(-1).value,
@@ -425,7 +466,7 @@ function body(st, age) {
 
 const recentDaily = (st, n = 7) => lastDays(n).map((date) => st.daily[date]).filter(Boolean);
 const nums = (rows, key) => rows.map((r) => r[key]).filter((v) => v !== undefined && v !== null && v !== '').map(Number);
-export const didStrength = (row) => !!row && (row.strength || (row.trained ?? []).some((t) => PART_KEYS.includes(t)));
+export const didStrength = (row) => !!row && (row.strength || (row.trained ?? []).some((t) => t === 'leg' || PART_KEYS.includes(t)));
 
 function recovery(st) {
   const rows = recentDaily(st);
