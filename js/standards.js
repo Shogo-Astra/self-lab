@@ -2,6 +2,8 @@
 // 数値はすべて SOURCES の出典に紐づける。出典で確かめきれていないものは check に【要確認】の内容を書く。
 // ランク・ポイント・天井・減少の数値はゲーム用の約束ごとで、医学的な判定ではない。
 
+import { NORM_SOURCE } from './norms.js';
+
 export const SOURCES = {
   pa2023: { name: '健康づくりのための身体活動・運動ガイド2023', org: '厚生労働省' },
   pa2013: {
@@ -32,6 +34,8 @@ export const SOURCES = {
     check: '年代別の得点表を本文で確認し、握力・上体起こし・長座体前屈・反復横とび・立ち幅とび・開眼片足立ちの天井を自己基準から置き換える',
   },
   locomo: { name: 'ロコモ度テスト(立ち上がりテスト・2ステップテスト)', org: '日本整形外科学会' },
+  // 全国平均(norms.js)の出典。毎年10月ごろに新しい年度が公表されるので、全国平均/build_norms.py で作り直す(出典名も一緒に変わる)
+  tairyoku: { name: NORM_SOURCE, org: 'スポーツ庁' },
   sft: { name: 'Senior Fitness Test(Back Scratch Test)', org: 'Rikli RE, Jones CJ' },
   acsm2009: {
     name: 'ACSM Position Stand: Progression Models in Resistance Training for Healthy Adults(2009)', org: 'American College of Sports Medicine',
@@ -177,7 +181,7 @@ export const STANDUP_LEVELS = ['両脚40cmもできない', '両脚40cm', '両�
 //   level … 自己基準。1段階上の台ごとに level 段階
 export const MEASURES = {
   vo2max: { label: 'VO2max(実測)', unit: 'ml/kg/分', step: 0.1, group: 'endurance', rule: { type: 'vo2' }, hint: 'Apple Watchの「心肺機能」の値など' },
-  rhr: { label: '安静時心拍数', unit: '拍/分', step: 1, group: 'endurance', rule: { type: 'vo2est' }, hint: '朝、起床後に座って1分間' },
+  rhr: { label: '安静時心拍数', unit: '拍/分', step: 1, group: 'endurance', rule: { type: 'vo2est' }, lower: '低いほど良い', hint: '朝、起床後に座って1分間' },
   pushup: { label: '腕立て伏せ(連続)', unit: '回', step: 1, group: 'strength', for: '腕・胸', rule: { pct: 0.1 }, hint: 'フォームが崩れたら終了' },
   grip: { label: '握力(左右の良い方)', unit: 'kg', step: 0.1, group: 'strength', for: '腕', rule: { pct: 0.03 }, hint: '握力計がある場合' },
   pike: { label: 'パイクプッシュアップ', unit: '回', step: 1, group: 'strength', for: '肩', rule: { pct: 0.1 }, hint: '腰を高く上げた「へ」の字の姿勢で、頭を床に近づける腕立て' },
@@ -189,7 +193,7 @@ export const MEASURES = {
   wallsit: { label: '空気椅子', unit: '秒', step: 1, group: 'strength', for: '太もも前', rule: { pct: 0.1 }, hint: '壁に背をつけ、膝を90度に曲げて保てた時間' },
   calfraise: { label: '片脚かかと上げ', unit: '回', step: 1, group: 'strength', for: 'ふくらはぎ', rule: { pct: 0.1 }, hint: '壁に軽く手を添え、片脚でかかとをできるだけ高く上げ下げした回数(左右の少ない方)' },
   sitreach: { label: '長座体前屈', unit: 'cm', step: 0.5, group: 'flex', rule: { abs: 1.5 }, src: 'shintairyoku', signed: true, hint: '壁に背とお尻をつけて長座し、床に置いた箱を前屈して押し出せた距離' },
-  shoulder: { label: '背中で手を近づける', unit: 'cm', step: 0.5, group: 'flex', rule: { abs: -1.5 }, src: 'sft', signed: true, hint: '片手は肩の上から、もう片方は腰から背中に回し、中指どうしのすき間(重なったらマイナス)。左右の良い方' },
+  shoulder: { label: '背中で手を近づける', unit: 'cm', step: 0.5, group: 'flex', rule: { abs: -1.5 }, src: 'sft', signed: true, lower: '小さいほど良い', hint: '片手は肩の上から、もう片方は腰から背中に回し、中指どうしのすき間(重なったらマイナス)。左右の良い方' },
   broadjump: { label: '立ち幅とび', unit: 'cm', step: 1, group: 'power', rule: { pct: 0.02 }, src: 'shintairyoku', hint: '両足で踏み切り、踏み切り線から着地したかかとまでの距離' },
   sidestep: { label: '反復横とび(20秒)', unit: '回', step: 1, group: 'agility', rule: { pct: 0.05 }, src: 'shintairyoku', hint: '中央線の左右100cmに線を引き、サイドステップで線を越えた(踏んだ)回数' },
   balanceClosed: { label: '閉眼片足立ち', unit: '秒', step: 1, group: 'balance', rule: { pct: 0.1 }, hint: '目を閉じ、手を腰に当てて片足で立てた時間' },
@@ -234,6 +238,14 @@ export function series(measures, key) {
   return measures.filter((m) => m.key === key).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.t - b.t));
 }
 const latestOf = (measures, key) => series(measures, key).at(-1) ?? null;
+
+// 一番良い記録(同じ値なら先に出した日)。lower の項目は小さいほど良い。からだの項目は良し悪しがないので null
+export function bestOf(measures, key) {
+  const m = MEASURES[key];
+  if (!m || m.group === 'body') return null;
+  const s = series(measures, key);
+  return s.length ? s.reduce((b, x) => ((m.lower ? x.value < b.value : x.value > b.value) ? x : b)) : null;
+}
 
 export function isoDate(d) {
   const p = (n) => String(n).padStart(2, '0');

@@ -138,6 +138,8 @@ small { font-size: 12px; }
 .chart .dot { fill: var(--series-1); stroke: var(--surface-1); stroke-width: 2; }
 .chart .area-2 { fill: var(--series-2); fill-opacity: 0.12; stroke: var(--series-2); stroke-width: 2; stroke-dasharray: 5 4; stroke-linejoin: round; }
 .chart .dot-2 { fill: var(--series-2); stroke: var(--surface-1); stroke-width: 2; }
+.chart .dot-best { fill: var(--series-2); stroke: var(--surface-1); stroke-width: 2; }
+.chart .t-best { fill: var(--text-secondary); font-weight: 700; }
 .chart .bar { fill: var(--series-1); }
 .chart .hit { fill: transparent; cursor: pointer; }
 .chart text { font-family: inherit; }
@@ -391,3 +393,14 @@ body.sheet-open #tabs { display: none; }
   transition: opacity .2s, transform .2s; white-space: nowrap;
 }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* 測定の入力欄の下:最高記録・全国平均・推移(文字はふつうのインク、強調は横のオレンジの点と薄い地色) */
+.rec { display: grid; gap: 6px; margin: -6px 0 14px; }
+.rec-best { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; width: fit-content; padding: 5px 12px; border-radius: 999px;
+  background: color-mix(in srgb, var(--series-2) 13%, transparent); color: var(--text-primary); font-size: 14px; }
+.rec-best i { width: 8px; height: 8px; border-radius: 50%; background: var(--series-2); flex: none; }
+.rec-best b { font-weight: 700; }
+.rec-best small { color: var(--text-muted); font-size: 12px; }
+.rec-avg, .rec-last { font-size: 13px; color: var(--text-secondary); margin: 0; }
+.rec-avg small { display: block; color: var(--text-muted); font-size: 12px; }
+.trend summary { font-size: 13px; color: var(--accent); cursor: pointer; padding: 2px 0; }

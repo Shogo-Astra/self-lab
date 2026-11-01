@@ -2,7 +2,7 @@ import {
   SOURCES, MEASURES, MEASURE_GROUPS, PARTS, ABILITIES, CONDITIONS, TRAININGS, DRINKS, STANDUP_LEVELS,
   RANKS, MAX_STEP, C_MINUS, NO_MEASURE_CEIL, THRESH, GAIN, GAIN_SOON, WEEK_CAP, SELF_MAX_STEP, SELF_DEFAULT_STEP,
   physicalStatus, conditionStatus, restState, rankLabel, letterOf, levelFromXp, testInfo, strengthsWeaknesses,
-  TRAINING_EFFECTS, RELATED, LEG_KEYS, sourcesOf, SPORTS, SPORT_WEIGHT, exerciseMinutes,
+  TRAINING_EFFECTS, RELATED, LEG_KEYS, sourcesOf, SPORTS, SPORT_WEIGHT, exerciseMinutes, bestOf,
   series, isoDate, lastDays, ageOf, bmiRange, waistLimit, stepsTarget, alcoholLimit, locomoTwoStep, locomoStandup,
 } from './standards.js';
 import { TIPS, PART_TIPS, QUIZ, QUIZ_CATS } from './content.js';
@@ -10,6 +10,7 @@ import { radar, bodyMap, lineChart, barChart } from './charts.js';
 import { encodeCard, decodeCard, findCode, newId, upgradeParts } from './share.js';
 import { CHANGELOG, isNewer } from './changelog.js';
 import { HEALTH_KEYS, HEALTH_TEMPLATE, SAMPLE_MARK, parseHealth } from './health.js';
+import { normFor } from './norms.js';
 
 const VERSION = CHANGELOG[0].version;
 const KEY = 'sp-health-v1';
@@ -298,10 +299,13 @@ function viewStat(key) {
     let extra = '';
     if (tk === 'twostep' && state.profile.height) extra = `ロコモ度:${locomoTwoStep(t.latest / state.profile.height)}`;
     if (tk === 'standup') extra = `ロコモ度:${locomoStandup(t.latest)}`;
+    const norm = myNorm(tk); const best = bestOf(state.measures, tk);
     return `<div class="part"><div class="part-top"><b>${m.label}</b><span>${esc(fmtMeasure(tk, t.latest))}</span><span class="part-score">天井 ${rankLabel(t.ceil)}</span></div>
       <p class="t-muted">${esc(testInfo(tk, t.first, t.latest, state.profile, s.base))}${extra ? `。${extra}` : ''}</p>
-      ${srcList([...(m.rule.type ? ['pa2013'] : []), ...(m.rule.type === 'vo2est' ? ['uth', 'tanaka'] : []), m.src, 'app'].filter(Boolean))}
-      ${tk === 'standup' ? '' : lineChart({ pts: ser, unit: m.unit, id: `t-${tk}` })}</div>`;
+      ${best ? `<p class="rec-best"><i aria-hidden="true"></i>最高記録 ${md(best.date)}:<b>${esc(fmtMeasure(tk, best.value))}</b>${m.lower ? `<small>(${m.lower})</small>` : ''}</p>` : ''}
+      ${norm ? `<p class="rec-avg">全国平均(${norm.label}・${sexName()}):${norm.mean}${m.unit}${tk === 'grip' ? `<small>${GRIP_NOTE}</small>` : ''}</p>` : ''}
+      ${srcList([...(m.rule.type ? ['pa2013'] : []), ...(m.rule.type === 'vo2est' ? ['uth', 'tanaka'] : []), m.src, ...(norm ? ['tairyoku'] : []), 'app'].filter(Boolean))}
+      ${tk === 'standup' ? '' : lineChart({ pts: ser, unit: m.unit, id: `t-${tk}`, best, ref: norm ? { value: norm.mean, label: `全国平均 ${norm.mean}` } : null })}</div>`;
   }).join('');
 
   return `<div class="sheet" role="dialog" aria-label="${def.name}の詳細">
@@ -430,13 +434,40 @@ function viewDaily() {
   </form>`;
 }
 
+// 全国平均(年齢・性別が同じ人の平均)。プロフィールがなければ出さない
+const myNorm = (k) => (state.profile ? normFor(k, state.profile.sex, ageOf(state.profile)) : null);
+const sexName = () => (state.profile?.sex === 'f' ? '女性' : '男性');
+const diffText = (v) => String(Number(v.toFixed(1)));
+const GRIP_NOTE = '全国平均は左右それぞれの良い方を平均した値です。このアプリは良い方の手の値なので、平均より少し高めに出ます';
+
+// 入力欄の下に出す、最高記録・全国平均・推移のグラフ
+function recordInfo(k) {
+  const m = MEASURES[k];
+  const best = bestOf(state.measures, k);
+  const norm = myNorm(k);
+  const ser = series(state.measures, k);
+  const out = [];
+  if (best) out.push(`<p class="rec-best"><i aria-hidden="true"></i>最高記録 ${md(best.date)}:<b>${esc(fmtMeasure(k, best.value))}</b>${m.lower ? `<small>(${m.lower})</small>` : ''}</p>`);
+  else if (m.group === 'body' && ser.length) out.push(`<p class="rec-last">前回 ${md(ser.at(-1).date)}:${esc(fmtMeasure(k, ser.at(-1).value))}</p>`);
+  if (norm) {
+    const d = best ? best.value - norm.mean : null;
+    const cmp = d === null ? '' : d >= 0 ? ` <span class="state good">平均以上 +${diffText(d)}${m.unit}</span>` : ` <span class="t-muted">平均まであと ${diffText(-d)}${m.unit}</span>`;
+    out.push(`<p class="rec-avg">全国平均(${norm.label}・${sexName()}):${norm.mean}${m.unit}${cmp}${k === 'grip' ? `<small>${GRIP_NOTE}</small>` : ''}</p>`);
+  }
+  if (ser.length && !m.options) {
+    out.push(`<details class="trend"><summary>推移を見る(${ser.length}回)</summary>${lineChart({ pts: ser, unit: m.unit, id: `m-${k}`, best,
+      ref: norm ? { value: norm.mean, label: `全国平均 ${norm.mean}` } : null })}</details>`);
+  }
+  return out.length ? `<div class="rec">${out.join('')}</div>` : '';
+}
+
 function measureInput(k, m) {
   if (m.options) {
     return `<label class="field"><span>${m.label}<small>${esc(m.hint)}</small></span>
-      <select name="${k}"><option value="">選ぶ</option>${m.options.map((o, i) => `<option value="${i}">${esc(o)}</option>`).join('')}</select></label>`;
+      <select name="${k}"><option value="">選ぶ</option>${m.options.map((o, i) => `<option value="${i}">${esc(o)}</option>`).join('')}</select></label>${recordInfo(k)}`;
   }
   return `<label class="field"><span>${m.label}${m.for ? `<b class="for">${m.for}</b>` : ''}<small>${esc(m.hint)}</small></span>
-    <span class="unit-in"><input type="number" name="${k}" inputmode="decimal" step="${m.step}" ${m.signed ? '' : 'min="0"'}><em>${m.unit}</em></span></label>`;
+    <span class="unit-in"><input type="number" name="${k}" inputmode="decimal" step="${m.step}" ${m.signed ? '' : 'min="0"'}><em>${m.unit}</em></span></label>${recordInfo(k)}`;
 }
 
 function viewMeasure() {
@@ -446,6 +477,7 @@ function viewMeasure() {
     <p class="t-muted small">測れたものだけ入れれば大丈夫です。測定するとランクの天井が決まります。</p>
     ${MEASURE_GROUPS.map(([g, name], i) => `<details class="mgroup" ${i === 0 ? 'open' : ''}><summary>${name}</summary>
       ${Object.entries(MEASURES).filter(([, m]) => m.group === g).map(([k, m]) => measureInput(k, m)).join('')}</details>`).join('')}
+    <p class="src">全国平均の出典:${esc(srcName('tairyoku'))}。握力・上体起こし・長座体前屈・反復横とび・立ち幅とびは20〜64歳、開眼片足立ちは65〜79歳のデータがあります</p>
     <button class="btn primary wide" type="submit">保存する +30XP</button>
   </form>
   ${recent.length ? `<section class="card"><h3>最近の測定</h3><div class="list">${recent.map((r) => `<div class="row static">

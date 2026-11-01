@@ -94,7 +94,8 @@ export function bodyMap(parts) {
 }
 
 // 折れ線(1系列)。pts: [{date, value}], ref: {value, label}
-export function lineChart({ pts, unit, ref, id, dots = true }) {
+// best:強調する1点(最高記録)。オレンジの点に「最高」のラベルを付ける
+export function lineChart({ pts, unit, ref, id, dots = true, best = null }) {
   if (!pts.length) return '';
   const W = 340; const H = 170; const L = 40; const Rt = 14; const T = 14; const B = 26;
   const pw = W - L - Rt; const ph = H - T - B;
@@ -113,11 +114,26 @@ export function lineChart({ pts, unit, ref, id, dots = true }) {
   const refLine = ref ? `<line x1="${L}" x2="${W - Rt}" y1="${Y(ref.value).toFixed(1)}" y2="${Y(ref.value).toFixed(1)}" class="ref" />
     <text x="${W - Rt}" y="${(Y(ref.value) - 5).toFixed(1)}" text-anchor="end" class="t-axis">${esc(ref.label)}</text>` : '';
   const path = pts.map((p, i) => `${i ? 'L' : 'M'}${X(p.date).toFixed(1)},${Y(p.value).toFixed(1)}`).join('');
-  const marks = pts.map((p) => {
-    const x = X(p.date).toFixed(1); const y = Y(p.value).toFixed(1);
+  const dotMarks = dots ? pts.map((p) => `<circle cx="${X(p.date).toFixed(1)}" cy="${Y(p.value).toFixed(1)}" r="4" class="dot" />`).join('') : '';
+  let bestMark = '';
+  if (best) {
+    const bx = X(best.date); const by = Y(best.value);
+    // 「最高」の文字は点の上 → 下 → 左の順に、枠の中に収まり、平均の文字(右端)と重ならない場所に置く
+    const box = (x, y, a) => { const w = 26; const x0 = a === 'end' ? x - w : a === 'start' ? x : x - w / 2; return [x0, y - 11, x0 + w, y + 2]; };
+    const textW = (t) => [...t].reduce((w, c) => w + (c.charCodeAt(0) > 0xff ? 11 : 6.5), 0); // 11px の文字のおよその幅
+    const refBox = ref ? [W - Rt - textW(ref.label), Y(ref.value) - 16, W - Rt, Y(ref.value) - 3] : null;
+    const hit = (a, b) => b && a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+    const side = bx > W - Rt - 16 ? 'end' : bx < L + 16 ? 'start' : 'middle';
+    const spots = [[bx, by - 10, side], [bx, by + 19, side], [bx - 10, by + 4, 'end'], [bx + 10, by + 4, 'start']];
+    const [lx, ly, anchor] = spots.find(([x, y, a]) => { const b = box(x, y, a); return b[1] >= 0 && b[3] <= H - B && b[0] >= 0 && b[2] <= W && !hit(b, refBox); }) ?? spots[0];
+    bestMark = `<circle cx="${bx.toFixed(1)}" cy="${by.toFixed(1)}" r="5.5" class="dot-best" />
+      <text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="${anchor}" class="t-axis t-best">最高</text>`;
+  }
+  const hits = pts.map((p) => {
     const tip = `${md(p.date)} · ${fmt(p.value)} ${unit}`;
-    return `${dots ? `<circle cx="${x}" cy="${y}" r="4" class="dot" />` : ''}<circle cx="${x}" cy="${y}" r="${dots ? 16 : 6}" class="hit" data-tip="${esc(tip)}" />`;
+    return `<circle cx="${X(p.date).toFixed(1)}" cy="${Y(p.value).toFixed(1)}" r="${dots ? 16 : 6}" class="hit" data-tip="${esc(tip)}" />`;
   }).join('');
+  const marks = dotMarks + bestMark + hits;
   const last = pts.at(-1);
   return `<figure class="fig">
     <svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="推移のグラフ" data-chart="${esc(id)}">
