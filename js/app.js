@@ -11,10 +11,11 @@ import { encodeCard, decodeCard, findCode, newId, upgradeParts } from './share.j
 import { CHANGELOG, isNewer } from './changelog.js';
 import { HEALTH_KEYS, HEALTH_TEMPLATE, SAMPLE_MARK, parseHealth } from './health.js';
 import { normFor } from './norms.js';
+import { buildPlan, planRecord, PLACES, TIMES, COUNTS, FOCUSES, DEFAULT_PREFS } from './omakase.js';
 
 const VERSION = CHANGELOG[0].version;
 const KEY = 'sp-health-v1';
-const DEFAULT = { v: 1, profile: null, measures: [], daily: {}, quiz: {}, targets: {}, xp: 0, awarded: {}, me: null, friends: {}, selfInit: null, decayNotified: [], seenVersion: null, healthLast: null };
+const DEFAULT = { v: 1, profile: null, measures: [], daily: {}, quiz: {}, targets: {}, xp: 0, awarded: {}, me: null, friends: {}, selfInit: null, decayNotified: [], seenVersion: null, healthLast: null, omakase: null };
 
 // ---------- 保存 ----------
 
@@ -41,7 +42,7 @@ function status() {
 
 const ui = {
   tab: state.profile ? 'home' : 'settings', logMode: 'daily', logDate: isoDate(new Date()),
-  detail: null, quiz: null, friend: null, incoming: null, setup: false, health: null, healthGuide: false,
+  detail: null, quiz: null, friend: null, incoming: null, setup: false, health: null, healthGuide: false, omakase: null,
 };
 // iPhoneではホーム画面のアプリとSafariで保存場所が別になる
 const standalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
@@ -143,14 +144,6 @@ function viewHome() {
   const axes = ABILITIES.map((a) => ({ key: a.key, name: a.name, value: pct(phys.abilities[a.key].step), label: rankLabel(phys.abilities[a.key].step) }));
   const loggedToday = !!state.daily[today()];
 
-  // 部位の今日の状態
-  const groups = {};
-  for (const p of PARTS) {
-    const r = restState(phys.parts[p.key]);
-    const k = r.tone === 'bad' || r.tone === 'warn' ? 'warn' : r.tone === 'good' ? 'good' : r.tone === 'rest' ? 'rest' : null;
-    if (k) (groups[k] ??= []).push(p.name);
-  }
-
   return `
   <section class="hero card">
     <div class="hero-top">
@@ -160,24 +153,22 @@ function viewHome() {
     <div class="xpbar" role="progressbar" aria-valuemin="0" aria-valuemax="${lv.need}" aria-valuenow="${lv.into}"><i style="width:${(lv.into / lv.need) * 100}%"></i></div>
     <p class="t-muted">次のレベルまで ${lv.need - lv.into} XP ・ 連続記録 ${streak()} 日</p>
   </section>
+  ${omakaseCard()}
   ${state.selfInit ? '' : `<button class="card cta" data-action="setup-open">自己評価で、今の自分のランクを決めましょう <b>はじめる</b></button>`}
   ${decayInfo(phys)}
   ${loggedToday ? '' : `<button class="card cta" data-action="tab" data-tab="log">今日のチェックインがまだです <b>記録する +20XP</b></button>`}
   <button class="card today-parts" data-action="detail" data-stat="strength">
-    <h3>今日の部位</h3>
-    ${groups.good ? `<p><span class="state good">鍛えどき</span>${groups.good.join('・')}</p>` : ''}
-    ${groups.rest ? `<p><span class="state rest">回復中</span>${groups.rest.join('・')}</p>` : ''}
-    ${groups.warn ? `<p><span class="state warn">要注意</span>${groups.warn.join('・')}</p>` : ''}
-    ${!groups.good && !groups.rest && !groups.warn ? '<p class="t-muted">チェックインで鍛えた部位を記録すると、回復状況が表示されます</p>' : ''}
+    <div class="card-head"><h3>今日の部位</h3><span class="t-muted small">タップで筋力の詳細 ›</span></div>
+    <div class="pgrid">${PARTS.map((p) => { const r = restState(phys.parts[p.key]); return `<span class="pg ${r.tone}"><b>${p.name}</b><small>${r.label}</small></span>`; }).join('')}</div>
   </button>
   <section class="card"><h3>身体能力</h3>${radar(axes, { refAt: pct(C_MINUS), refLabel: 'C−' })}<p class="t-muted center small">点線の輪がC−(これより上は休みすぎると減少)。項目をタップすると詳細</p>
     ${swHtml(SELF_ITEMS.map((x) => ({ key: x.key, name: x.name, step: (x.group === 'part' ? phys.parts : phys.abilities)[x.key].step })))}</section>
-  <section class="card list">
+  <section class="card list"><h3>身体能力のランク</h3>
     ${ABILITIES.map((a) => {
       const s = phys.abilities[a.key];
       return `<button class="row" data-action="detail" data-stat="${a.key}">
         ${badge(s.step)}
-        <span class="row-name">${a.name}${a.key === 'strength' ? '<small>6部位の平均</small>' : stateChip(s)}</span>
+        <span class="row-name">${a.name}<span class="row-state">${a.key === 'strength' ? '<small>9部位の平均</small>' : stateChip(s)}</span></span>
         <span class="meter"><i style="width:${a.key === 'strength' ? pct(s.step) : progress(s)}%"></i></span>
         <span class="row-val">${rankLabel(s.step)}</span>
       </button>`;
@@ -405,32 +396,111 @@ function radios(name, opts, cur) {
 }
 const val = (v) => (v === undefined || v === null ? '' : esc(v));
 
+// ---------- おまかせ(今日のトレーニングを決める) ----------
+
+const omName = (k) => (k === 'cardio' ? '持久力' : targetName(k));
+const placeName = (k) => PLACES.find(([v]) => v === k)?.[1] ?? k;
+const OM_TONE = { 減少中: 'bad', 回復中: 'rest', 弱み: 'warn', 鍛えどき: 'good' };
+const omTone = (why) => OM_TONE[why] ?? (why.startsWith('あと') ? 'warn' : 'muted');
+
+function omakaseCard() {
+  const row = state.daily[today()];
+  const done = (row?.trained ?? []).flatMap((t) => (t === 'leg' ? LEG_KEYS : [t]));
+  return `<section class="card om-card">
+    <div class="card-head"><h3>今日のトレーニング</h3>${done.length ? '<span class="state good">記録済み</span>' : ''}</div>
+    <p class="t-muted">${done.length ? `今日:${done.map(trainingName).join('、')}` : '決める余裕がない日は、おまかせで。回復中の部位を避けて、減りそうな項目や弱みから選びます'}</p>
+    <div class="om-btns">
+      <button class="btn primary" data-action="omakase" data-mode="auto"><b>完全おまかせ</b><small>${placeName(state.omakase?.place ?? DEFAULT_PREFS.place)}で約${DEFAULT_PREFS.time}分</small></button>
+      <button class="btn" data-action="omakase" data-mode="custom"><b>条件を選ぶ</b><small>時間・場所・種目数</small></button>
+    </div>
+  </section>`;
+}
+
+const currentPlan = () => buildPlan(status().phys, ui.omakase.prefs, `${today()}#${ui.omakase.reroll}`, ui.omakase.reroll);
+
+function viewOmakase() {
+  const o = ui.omakase;
+  const plan = currentPlan();
+  const p = plan.prefs;
+  o.done ??= plan.items.map(() => true);
+  const seg = (key, opts, cur) => `<div class="seg opt">${opts.map(([v, l]) => `<button type="button" class="${String(cur ?? '') === String(v) ? 'on' : ''}" data-action="om-pref" data-key="${key}" data-val="${v}">${l}</button>`).join('')}</div>`;
+  const mains = plan.items.filter((x) => x.slot);
+  const conds = o.mode === 'custom'
+    ? `<section class="card form om-conds">
+        <div class="field"><span>時間</span>${seg('time', TIMES.map((t) => [t, `${t}分`]), p.time)}</div>
+        <div class="field"><span>場所</span>${seg('place', PLACES, p.place)}</div>
+        <div class="field"><span>種目数<small>準備運動・有酸素・ストレッチは別に入ります</small></span>${seg('count', [['', 'おまかせ'], ...COUNTS.map((c) => [c, `${c}`])], p.count)}</div>
+        <div class="field last"><span>重点</span>${seg('focus', [['', 'おまかせ'], ...FOCUSES], p.focus)}</div>
+      </section>`
+    : `<section class="card om-sum"><p><b>${placeName(p.place)}</b>で<b>約${p.time}分</b>・<b>${mains.length}種目</b></p>
+        <button class="btn ghost small" data-action="om-custom">条件を変える ›</button></section>`;
+  let n = 0;
+  const label = { warm: '準備運動', cardio: '有酸素', stretch: '整理運動' };
+  const rows = plan.items.map((x, i) => {
+    const head = x.slot ? `${++n}` : '';
+    return `<label class="om-item ${x.type}">
+      <input type="checkbox" data-om-done="${i}" ${o.done[i] ? 'checked' : ''}>
+      <span class="om-body">
+        <span class="om-top">${head ? `<i class="om-no">${head}</i>` : label[x.type] && label[x.type] !== x.name ? `<i class="om-kind">${label[x.type]}</i>` : ''}<b>${esc(x.name)}</b></span>
+        <span class="om-dose">${esc(x.dose ?? `${x.min}分`)}</span>
+        <span class="om-how">${esc(x.how)}${x.easier ? `<em>(${esc(x.easier)})</em>` : ''}</span>
+        ${x.targets.length ? `<span class="om-tags">${x.targets.map(omName).join('・')}${x.why?.length ? ` <span class="state ${omTone(x.why[0])}">${esc(x.why[0])}</span>` : ''}</span>` : ''}
+      </span>
+    </label>`;
+  }).join('');
+  return `<div class="sheet" role="dialog" aria-label="今日のトレーニング">
+    <header class="sheet-head"><button class="btn ghost" data-action="close">‹ 閉じる</button><h2>今日のメニュー</h2><span></span></header>
+    ${conds}
+    <section class="card om-plan">
+      <div class="card-head"><h3>メニュー</h3><span class="t-muted small">合計 約${plan.total}分・休み ${plan.rest}秒</span></div>
+      ${plan.notes.map((t) => `<p class="chk small">${esc(t)}</p>`).join('')}
+      ${rows}
+      <p class="t-muted small">やらなかった種目はチェックを外してから記録してください。チェックした種目の部位が、今日のチェックインに入ります。</p>
+    </section>
+    <div class="om-actions">
+      <button class="btn" data-action="om-reroll">別のメニュー</button>
+      <button class="btn primary" data-action="om-record">やった!記録する</button>
+    </div>
+    <section class="card info om-safe"><p>痛み・めまい・強い息切れがあれば、すぐに中止してください。息を止めずに、体調が悪い日は休むのもトレーニングです。持病のある方は、主治医に確認してから行ってください。</p>
+      ${srcList(['acsm2009', 'garber2011', 'pa2023', 'app'])}</section>
+  </div>`;
+}
+
 function viewDaily() {
   const d = state.daily[ui.logDate] ?? {};
   const trained = new Set((d.trained ?? []).flatMap((t) => (t === 'leg' ? LEG_KEYS : [t])));
   const toggle = (t) => `<label class="tg"><input type="checkbox" name="trained" value="${t.key}" ${trained.has(t.key) ? 'checked' : ''}><span>${t.label}</span></label>`;
-  return `<form id="daily-form" class="card form" autocomplete="off">
-    <label class="field"><span>日付</span><input type="date" name="date" value="${ui.logDate}" max="${today()}" data-action="log-date"></label>
-    <h3>トレーニング</h3>
-    <div class="field"><span>鍛えた部位</span><div class="toggles">${TRAININGS.filter((t) => t.kind === 'part').map(toggle).join('')}</div></div>
-    <div class="field"><span>そのほかのトレーニング</span><div class="toggles">${TRAININGS.filter((t) => t.kind === 'other').map(toggle).join('')}</div>
-      <small class="t-muted">息が弾む運動の分数を入れた日は「有酸素」、歩数が目安以上の日は「歩く力」も自動で記録されます</small></div>
-    <div class="field"><span>スポーツ</span><div class="toggles">${SPORTS.map((x) => `<label class="tg"><input type="checkbox" name="sport" value="${x.key}" ${(d.sports ?? []).includes(x.key) ? 'checked' : ''}><span>${x.label}</span></label>`).join('')}</div>
-      <small class="t-muted">スポーツをした日は、その種目に関わる能力・部位すべてに半分のポイントが入ります</small>
-      <details class="tip"><summary>どの能力にポイントが入る?</summary>${effectsTable()}</details></div>
-    <label class="field"><span>スポーツの時間<small>生活習慣の「運動」に数えます(息が弾む運動の分数と大きいほう)</small></span><span class="unit-in"><input type="number" name="sportMin" inputmode="numeric" min="0" value="${val(d.sportMin)}" placeholder="0"><em>分</em></span></label>
-    <label class="field"><span>息が弾む運動</span><span class="unit-in"><input type="number" name="exMin" inputmode="numeric" min="0" value="${val(d.exMin)}" placeholder="0"><em>分</em></span></label>
-    <label class="field"><span>歩数</span><span class="unit-in"><input type="number" name="steps" inputmode="numeric" min="0" value="${val(d.steps)}" placeholder="8000"><em>歩</em></span></label>
-    <h3>回復</h3>
-    <label class="field"><span>睡眠時間</span><span class="unit-in"><input type="number" name="sleepH" inputmode="decimal" step="0.5" min="0" max="16" value="${val(d.sleepH)}" placeholder="7"><em>時間</em></span></label>
-    <div class="field"><span>睡眠で休養がとれた感覚</span>${radios('rest', [[1, '1'], [2, '2'], [3, '3'], [4, '4'], [5, '5']], d.rest)}<small class="t-muted">1 まったくとれない 〜 5 十分とれた</small></div>
-    <h3>食事・飲酒</h3>
-    <label class="field"><span>野菜(小鉢)</span><span class="unit-in"><input type="number" name="veg" inputmode="numeric" min="0" max="10" value="${val(d.veg)}" placeholder="0"><em>皿</em></span></label>
-    <div class="field"><span>主菜(肉・魚・卵・大豆)を食べた食事</span>${radios('protein', [[0, '0'], [1, '1'], [2, '2'], [3, '3']], d.protein)}</div>
-    <label class="field"><span>純アルコール</span><span class="unit-in"><input type="number" name="alcoholG" inputmode="decimal" min="0" value="${val(d.alcoholG)}" placeholder="0"><em>g</em></span></label>
-    <div class="chips">${DRINKS.map((x) => `<button type="button" class="chip" data-action="drink" data-g="${x.g}">+${x.label}(${x.g}g)</button>`).join('')}<button type="button" class="chip" data-action="drink" data-g="0">リセット</button></div>
-    <label class="field"><span>メモ</span><input type="text" name="memo" value="${val(d.memo)}" placeholder="体調・気づいたこと"></label>
-    <button class="btn primary wide" type="submit">${state.daily[ui.logDate] ? '更新する' : '保存する +20XP'}</button>
+  const sports = d.sports ?? [];
+  return `<form id="daily-form" class="form stack" autocomplete="off">
+    <section class="card"><label class="field last"><span>日付</span><input type="date" name="date" value="${ui.logDate}" max="${today()}" data-action="log-date"></label></section>
+    <section class="card"><h3>トレーニング</h3>
+      <div class="field"><span>鍛えた部位</span><div class="toggles">${TRAININGS.filter((t) => t.kind === 'part').map(toggle).join('')}</div></div>
+      <div class="field last"><span>そのほかのトレーニング</span><div class="toggles">${TRAININGS.filter((t) => t.kind === 'other').map(toggle).join('')}</div>
+        <small class="t-muted">息が弾む運動の分数を入れた日は「有酸素」、歩数が目安以上の日は「歩く力」も自動で記録されます</small>
+        <details class="tip"><summary>どの能力にポイントが入る?</summary>${effectsTable()}</details></div>
+    </section>
+    <section class="card"><details class="fold" ${sports.length || d.sportMin ? 'open' : ''}>
+      <summary><h3>スポーツ</h3><span class="t-muted small">${sports.length ? `${sports.length}種目を選択中` : 'した日だけ選ぶ'}</span></summary>
+      <div class="field"><div class="toggles">${SPORTS.map((x) => `<label class="tg"><input type="checkbox" name="sport" value="${x.key}" ${sports.includes(x.key) ? 'checked' : ''}><span>${x.label}</span></label>`).join('')}</div>
+        <small class="t-muted">スポーツをした日は、その種目に関わる能力・部位すべてに半分のポイントが入ります</small></div>
+      <label class="field last"><span>スポーツの時間<small>生活習慣の「運動」に数えます(息が弾む運動の分数と大きいほう)</small></span><span class="unit-in"><input type="number" name="sportMin" inputmode="numeric" min="0" value="${val(d.sportMin)}" placeholder="0"><em>分</em></span></label>
+    </details></section>
+    <section class="card"><h3>活動量</h3>
+      <label class="field"><span>息が弾む運動</span><span class="unit-in"><input type="number" name="exMin" inputmode="numeric" min="0" value="${val(d.exMin)}" placeholder="0"><em>分</em></span></label>
+      <label class="field last"><span>歩数</span><span class="unit-in"><input type="number" name="steps" inputmode="numeric" min="0" value="${val(d.steps)}" placeholder="8000"><em>歩</em></span></label>
+    </section>
+    <section class="card"><h3>回復</h3>
+      <label class="field"><span>睡眠時間</span><span class="unit-in"><input type="number" name="sleepH" inputmode="decimal" step="0.5" min="0" max="16" value="${val(d.sleepH)}" placeholder="7"><em>時間</em></span></label>
+      <div class="field last"><span>睡眠で休養がとれた感覚</span>${radios('rest', [[1, '1'], [2, '2'], [3, '3'], [4, '4'], [5, '5']], d.rest)}<small class="t-muted">1 まったくとれない 〜 5 十分とれた</small></div>
+    </section>
+    <section class="card"><h3>食事・飲酒</h3>
+      <label class="field"><span>野菜(小鉢)</span><span class="unit-in"><input type="number" name="veg" inputmode="numeric" min="0" max="10" value="${val(d.veg)}" placeholder="0"><em>皿</em></span></label>
+      <div class="field"><span>主菜(肉・魚・卵・大豆)を食べた食事</span>${radios('protein', [[0, '0'], [1, '1'], [2, '2'], [3, '3']], d.protein)}</div>
+      <label class="field"><span>純アルコール</span><span class="unit-in"><input type="number" name="alcoholG" inputmode="decimal" min="0" value="${val(d.alcoholG)}" placeholder="0"><em>g</em></span></label>
+      <div class="chips last">${DRINKS.map((x) => `<button type="button" class="chip" data-action="drink" data-g="${x.g}">+${x.label}(${x.g}g)</button>`).join('')}<button type="button" class="chip" data-action="drink" data-g="0">リセット</button></div>
+    </section>
+    <section class="card"><label class="field last"><span>メモ</span><input type="text" name="memo" value="${val(d.memo)}" placeholder="体調・気づいたこと"></label></section>
+    <button class="btn primary wide big-btn" type="submit">${state.daily[ui.logDate] ? '更新する' : '保存する +20XP'}</button>
   </form>`;
 }
 
@@ -844,7 +914,7 @@ function changelogSection() {
 function render() {
   const views = { home: viewHome, log: viewLog, learn: viewLearn, friends: viewFriends, settings: viewSettings };
   $('#main').innerHTML = views[ui.tab]();
-  const sheet = ui.incoming ? viewIncoming() : ui.health ? viewHealthImport() : ui.healthGuide ? viewHealthGuide() : ui.setup && state.profile ? viewSetup() : ui.friend ? viewFriend(ui.friend) : ui.detail && status() ? viewDetail(ui.detail) : '';
+  const sheet = ui.incoming ? viewIncoming() : ui.health ? viewHealthImport() : ui.healthGuide ? viewHealthGuide() : ui.setup && state.profile ? viewSetup() : ui.omakase && status() ? viewOmakase() : ui.friend ? viewFriend(ui.friend) : ui.detail && status() ? viewDetail(ui.detail) : '';
   $('#sheet').innerHTML = sheet;
   const notes = ui.incoming ? [] : unseenNotes();
   $('#modal').innerHTML = notes.length ? viewWhatsNew(notes) : '';
@@ -861,7 +931,8 @@ const actions = {
   // 部位の詳細は筋力の詳細から開くので、戻ると筋力に戻れるよう前の画面を覚えておく
   detail: (el) => { ui.back = ui.detail; ui.detail = el.dataset.stat; render(); $('#sheet').scrollTop = 0; },
   close: () => {
-    if (ui.incoming) ui.incoming = null;
+    if (ui.omakase) ui.omakase = null;
+    else if (ui.incoming) ui.incoming = null;
     else if (ui.friend) ui.friend = null;
     else if (ui.detail?.startsWith('part:') && ui.back === 'strength') { ui.detail = 'strength'; ui.back = null; }
     else ui.detail = null;
@@ -916,6 +987,32 @@ const actions = {
   },
   'add-incoming': () => {
     if (addFriend(ui.incoming.card)) { ui.incoming = null; go('friends'); }
+  },
+  omakase: (el) => {
+    const last = state.omakase ?? {};
+    const prefs = el.dataset.mode === 'auto' ? { ...DEFAULT_PREFS, place: last.place ?? DEFAULT_PREFS.place } : { ...DEFAULT_PREFS, ...last };
+    ui.omakase = { mode: el.dataset.mode, prefs, reroll: 0, done: null };
+    render(); $('#sheet').scrollTop = 0;
+  },
+  'om-pref': (el) => {
+    const o = ui.omakase; const k = el.dataset.key; const v = el.dataset.val;
+    o.prefs[k] = v === '' ? null : k === 'time' || k === 'count' ? Number(v) : v;
+    o.done = null; state.omakase = { ...o.prefs }; save(); render();
+  },
+  'om-custom': () => { ui.omakase.mode = 'custom'; render(); },
+  'om-reroll': () => { ui.omakase.reroll++; ui.omakase.done = null; render(); },
+  'om-record': () => {
+    const plan = currentPlan();
+    const { trained, cardioMin } = planRecord(plan, ui.omakase.done ?? plan.items.map(() => true));
+    if (!trained.length) { toast('やった種目にチェックを入れてください'); return; }
+    const date = today();
+    const row = { ...(state.daily[date] ?? {}) };
+    row.trained = [...new Set([...(row.trained ?? []).flatMap((t) => (t === 'leg' ? LEG_KEYS : [t])), ...trained])];
+    if (cardioMin) row.exMin = Math.max(Number(row.exMin) || 0, cardioMin);
+    state.daily[date] = row;
+    const xp = gainXp(20, `d:${date}`);
+    ui.omakase = null; save();
+    toast(`記録しました${xp ? ` +${xp}XP` : ''}`); go('home');
   },
   'log-for': (el) => { ui.logMode = el.dataset.mode; ui.logDate = today(); go('log'); },
   'log-mode': (el) => { ui.logMode = el.dataset.mode; render(); },
@@ -989,6 +1086,7 @@ document.addEventListener('change', (e) => {
   if (e.target.dataset.action === 'log-date') { ui.logDate = e.target.value || today(); render(); }
   if (e.target.dataset.action === 'health-day' && ui.health) { ui.health.day = e.target.value && e.target.value <= today() ? e.target.value : today(); render(); }
   if (e.target.id === 'import-file') importFile(e.target.files[0]);
+  if (e.target.dataset.omDone !== undefined && ui.omakase?.done) ui.omakase.done[Number(e.target.dataset.omDone)] = e.target.checked;
 });
 
 const num = (v) => (v === '' || v === null || v === undefined ? undefined : Number(v));
