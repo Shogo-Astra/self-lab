@@ -9,7 +9,7 @@ import { TIPS, PART_TIPS, QUIZ, QUIZ_CATS } from './content.js';
 import { radar, bodyMap, lineChart, barChart } from './charts.js';
 import { encodeCard, decodeCard, findCode, newId, upgradeParts } from './share.js';
 import { CHANGELOG, isNewer } from './changelog.js';
-import { HEALTH_KEYS, HEALTH_TEMPLATE, parseHealth } from './health.js';
+import { HEALTH_KEYS, HEALTH_TEMPLATE, SAMPLE_MARK, parseHealth } from './health.js';
 
 const VERSION = CHANGELOG[0].version;
 const KEY = 'sp-health-v1';
@@ -470,15 +470,18 @@ function startHealthImport(text) {
   const freq = {};
   for (const v of Object.values(parsed.all)) if (v !== 0) freq[v] = (freq[v] ?? 0) + 1;
   const [same, n] = Object.entries(freq).sort((a, b) => b[1] - a[1])[0] ?? [null, 0];
-  ui.health = { ...parsed, day, suspicious: n >= 3 ? same : null, raw: String(text).slice(0, 6000) };
+  // 歩数のサンプルは長いので、元の文字の表示では件数だけにする
+  const raw = String(text); const cut = raw.indexOf(SAMPLE_MARK);
+  const shown = cut < 0 ? raw : `${raw.slice(0, cut)}${SAMPLE_MARK}(${parsed.steps ? `歩数のサンプル${parsed.steps.n}件は省略` : '歩数のサンプルは読み取れませんでした'})`;
+  ui.health = { ...parsed, day, suspicious: n >= 3 ? same : null, raw: shown.slice(0, 6000) };
   render(); $('#sheet').scrollTop = 0;
 }
 
 function viewHealthImport() {
   const h = ui.health;
   const cur = state.daily[h.day] ?? {};
-  const rows = Object.entries(h.values).map(([k, v]) => {
-    const def = HEALTH_KEYS[k];
+  const rows = Object.keys(HEALTH_KEYS).filter((k) => k in h.values).map((k) => {
+    const def = HEALTH_KEYS[k]; const v = h.values[k];
     const before = def.to === 'daily' ? cur[def.field] : null;
     return `<div class="row static"><span class="row-name">${def.label}<small>${def.to === 'daily' ? 'チェックイン' : '測定'}</small></span>
       <span class="row-sub">${before !== undefined && before !== null && before !== v ? `今 ${esc(before)} →` : ''}</span>
@@ -490,6 +493,7 @@ function viewHealthImport() {
       <label class="field"><span>日付<small>${h.day === today() ? '今日' : md(h.day)}のチェックインと測定に入ります</small></span>
         <input type="date" value="${h.day}" max="${today()}" data-action="health-day"></label>
       <div class="list">${rows}</div>
+      ${h.steps && h.steps.sources.length > 1 ? `<p class="t-muted small">歩数は、ヘルスケアアプリと同じくApple Watchを優先し、iPhoneなどと同じ時間に数えた分を重ねずに計算しました(${h.steps.sources.map((x) => `${esc(x.src)} ${x.sum.toLocaleString()}歩`).join('、')} → ${h.steps.total.toLocaleString()}歩)。</p>` : ''}
       ${h.skipped.length ? `<p class="chk small">範囲外のため取り込まない:${esc(h.skipped.join('、'))}</p>` : ''}
       ${h.suspicious !== null ? `<div class="info"><h3>値がおかしいかもしれません</h3><p>種類の違う3つ以上の項目が、同じ数字(${esc(h.suspicious)})になっています。ショートカットがヘルスケアの種類を正しく読めていない可能性があります。ヘルスケアアプリの値と見比べてから取り込んでください。</p></div>` : ''}
       <p class="t-muted small">チェックインのほかの項目(鍛えた部位・睡眠休養感など)はそのまま残ります。測定は前回と同じ値なら追加しません。</p>
