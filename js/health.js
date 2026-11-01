@@ -20,13 +20,16 @@ export const HEALTH_TEMPLATE = ['SELFLAB', 'day=', ...Object.keys(HEALTH_KEYS).m
 const toHalf = (s) => s.replace(/[０-９Ａ-Ｚａ-ｚ．，：＝]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0));
 const firstNumber = (s) => { const m = s.replace(/,/g, '').match(/-?\d+(?:\.\d+)?/); return m ? Number(m[0]) : null; };
 
-// 単位をそろえる。睡眠は時間、エクササイズは分、体脂肪率は%
+// 単位をそろえる。睡眠は時間、エクササイズは分、体重はkg、体脂肪率は%
 function normalize(key, raw) {
   const s = raw.replace(/,/g, '');
   if (key === 'sleep' || key === 'exercise') {
-    const hm = s.match(/(\d+(?:\.\d+)?)\s*(?:時間|h|hr)\s*(\d+(?:\.\d+)?)\s*(?:分|m|min)/i) ?? s.match(/^\s*(\d+):(\d{1,2})(?::\d{1,2})?\s*$/);
+    const hm = s.match(/(\d+(?:\.\d+)?)\s*(?:時間|h|hr)\s*(\d+(?:\.\d+)?)\s*(?:分|m|min)/i);
+    // ショートカットの時計形式の継続時間:1時間以上は h:mm:ss、1時間未満は m:ss(例 1:06:52、28:09)
+    const clock = s.match(/^\s*(\d+):(\d{1,2})(?::(\d{1,2}))?\s*$/);
     let minutes;
     if (hm) minutes = Number(hm[1]) * 60 + Number(hm[2]);
+    else if (clock) minutes = clock[3] !== undefined ? Number(clock[1]) * 60 + Number(clock[2]) + Number(clock[3]) / 60 : Number(clock[1]) + Number(clock[2]) / 60;
     else {
       const v = firstNumber(s);
       if (v === null) return null;
@@ -42,6 +45,7 @@ function normalize(key, raw) {
   const v = firstNumber(s);
   if (v === null) return null;
   if (key === 'bodyfat' && v < 1) return v * 100; // 0.182 のような割合で来たとき
+  if (key === 'weight' && v > 1000) return v / 1000; // ショートカットはグラムで返す(53099.99… → 53.1kg。2026-11-01 実機で確認)
   return v;
 }
 

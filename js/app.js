@@ -470,7 +470,7 @@ function startHealthImport(text) {
   const freq = {};
   for (const v of Object.values(parsed.all)) if (v !== 0) freq[v] = (freq[v] ?? 0) + 1;
   const [same, n] = Object.entries(freq).sort((a, b) => b[1] - a[1])[0] ?? [null, 0];
-  ui.health = { ...parsed, day, suspicious: n >= 3 ? same : null, raw: String(text).slice(0, 2000) };
+  ui.health = { ...parsed, day, suspicious: n >= 3 ? same : null, raw: String(text).slice(0, 6000) };
   render(); $('#sheet').scrollTop = 0;
 }
 
