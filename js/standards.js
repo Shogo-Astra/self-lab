@@ -140,6 +140,34 @@ export const TRAININGS = [
   { key: 'balance', label: 'バランス', kind: 'other' },
 ];
 
+// スポーツ(2026-11-01 ユーザーと決定)。スポーツは筋トレより狙いが広いので、種目に関わる能力・部位すべてに半分を配る。
+// main は主に使う能力、related はほかに関わる能力(表示の順番に使う。ポイントはどちらも SPORT_WEIGHT)。数値はゲーム用の約束ごと
+export const SPORT_WEIGHT = RELATED;
+export const SPORTS = [
+  { key: 'run', label: 'ランニング', main: ['endurance'], related: ['calf', 'quad', 'walk'] },
+  { key: 'bike', label: '自転車', main: ['endurance'], related: ['quad', 'glute'] },
+  { key: 'swim', label: '水泳', main: ['endurance'], related: ['shoulder', 'back'] },
+  { key: 'hike', label: '登山・ハイキング', main: ['endurance', 'walk'], related: ['quad', 'calf'] },
+  { key: 'soccer', label: 'サッカー・フットサル', main: ['endurance', 'agility'], related: ['power', 'quad', 'ham'] },
+  { key: 'basketball', label: 'バスケットボール', main: ['agility', 'power'], related: ['endurance', 'calf'] },
+  { key: 'volleyball', label: 'バレーボール', main: ['power'], related: ['agility', 'shoulder', 'calf'] },
+  { key: 'racket', label: 'テニス・バドミントン・卓球', main: ['agility'], related: ['power', 'endurance', 'shoulder'] },
+  { key: 'baseball', label: '野球・ソフトボール', main: ['power'], related: ['shoulder', 'agility', 'abs'] },
+  { key: 'golf', label: 'ゴルフ', main: [], related: ['flex', 'abs', 'walk'] },
+  { key: 'martial', label: '武道・格闘技', main: ['power'], related: ['agility', 'endurance', 'abs'] },
+  { key: 'dance', label: 'ダンス', main: ['endurance'], related: ['agility', 'balance', 'calf'] },
+  { key: 'yoga', label: 'ヨガ・ピラティス', main: ['flex'], related: ['balance', 'abs'] },
+  { key: 'ski', label: 'スキー・スノーボード', main: ['balance'], related: ['quad', 'glute', 'endurance'] },
+  { key: 'climb', label: 'クライミング', main: ['arm', 'back'], related: ['shoulder', 'abs'] },
+];
+export const SPORT_EFFECTS = Object.fromEntries(SPORTS.map((x) => [x.key, Object.fromEntries([...x.main, ...x.related].map((k) => [k, SPORT_WEIGHT]))]));
+
+// その日の運動時間(分):「息が弾む運動」とスポーツの時間の大きいほう(2026-11-01 ユーザーと決定。Apple Watch のエクササイズ時間と二重に数えない)
+export function exerciseMinutes(row) {
+  const v = [row?.exMin, row?.sportMin].filter((x) => x !== undefined && x !== null && x !== '').map(Number);
+  return v.length ? Math.max(...v) : null;
+}
+
 export const STANDUP_LEVELS = ['両脚40cmもできない', '両脚40cm', '両脚30cm', '両脚20cm', '両脚10cm', '片脚40cm', '片脚30cm', '片脚20cm', '片脚10cm'];
 
 // 測定項目。rule は天井の決め方:
@@ -319,18 +347,20 @@ export function weightOn(key, row, age) {
   if (!row) return 0;
   let w = 0;
   for (const t of expandTrained(row)) w = Math.max(w, TRAINING_EFFECTS[t]?.[key] ?? 0);
+  for (const sp of row.sports ?? []) w = Math.max(w, SPORT_EFFECTS[sp]?.[key] ?? 0);
+  // 有酸素(持久力に全部)は「息が弾む運動」の分数だけで判定する。スポーツの時間では入れない(スポーツは半分の約束のため)
   if (Number(row.exMin) > 0) w = Math.max(w, TRAINING_EFFECTS.cardio[key] ?? 0);
   if (key === 'walk' && Number(row.steps) >= stepsTarget(age)) w = 1;
   return w;
 }
 
-// この項目にポイントが入るトレーニング(直接/関係)
+// この項目にポイントが入るトレーニング(直接/関係)と、スポーツ(種目名)
 export function sourcesOf(key) {
   const direct = []; const related = [];
   for (const [t, eff] of Object.entries(TRAINING_EFFECTS)) {
     if (eff[key] === 1) direct.push(t); else if (eff[key]) related.push(t);
   }
-  return { direct, related };
+  return { direct, related, sports: SPORTS.filter((x) => SPORT_EFFECTS[x.key][key]).map((x) => x.label) };
 }
 
 function replay(def, st, days, age, sers) {
@@ -497,7 +527,7 @@ function habit(st, age) {
     parts.push({ label: '歩数', value: `${round(a).toLocaleString()} 歩/日`, score: round(clamp((a / t) * 100)), note: `目安 ${t.toLocaleString()} 歩/日`, src: ['pa2023', 'app'] });
   }
   if (rows.length) {
-    const ex = nums(rows, 'exMin').reduce((s, v) => s + v, 0);
+    const ex = rows.map(exerciseMinutes).reduce((s, v) => s + (v ?? 0), 0);
     parts.push({ label: '運動', value: `${ex} 分/週`, score: round(clamp((ex / EXERCISE_MIN_WEEK) * 100)), note: '息が弾み汗をかく程度の運動を週60分以上', src: ['pa2023', 'app'] });
     const days = rows.filter(didStrength).length;
     parts.push({ label: '筋トレ', value: `${days} 日/週`, score: days >= STRENGTH_DAYS_WEEK ? 100 : days * 50, note: '週2〜3日が目安', src: ['pa2023', 'app'] });

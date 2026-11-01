@@ -2,7 +2,7 @@ import {
   SOURCES, MEASURES, MEASURE_GROUPS, PARTS, ABILITIES, CONDITIONS, TRAININGS, DRINKS, STANDUP_LEVELS,
   RANKS, MAX_STEP, C_MINUS, NO_MEASURE_CEIL, THRESH, GAIN, GAIN_SOON, WEEK_CAP, SELF_MAX_STEP, SELF_DEFAULT_STEP,
   physicalStatus, conditionStatus, restState, rankLabel, letterOf, levelFromXp, testInfo, strengthsWeaknesses,
-  TRAINING_EFFECTS, RELATED, LEG_KEYS, sourcesOf,
+  TRAINING_EFFECTS, RELATED, LEG_KEYS, sourcesOf, SPORTS, SPORT_WEIGHT, exerciseMinutes,
   series, isoDate, lastDays, ageOf, bmiRange, waistLimit, stepsTarget, alcoholLimit, locomoTwoStep, locomoStandup,
 } from './standards.js';
 import { TIPS, PART_TIPS, QUIZ, QUIZ_CATS } from './content.js';
@@ -123,7 +123,10 @@ function effectsTable() {
       return `<tr><td>${trainingName(t)}</td><td>${full.join('・')}</td><td>${half.join('・') || '—'}</td></tr>`;
     }).join('')}
   </tbody></table>
-  <p class="t-muted small">息が弾む運動の分数を入れた日は「有酸素」、歩数が目安以上の日は「歩く力」に全部(歩く力は+3pt)入ります。同じ日に同じ項目へ複数のトレーニングから入るときは、一番大きい分だけが入ります。</p>`;
+  <table class="cmp eff"><thead><tr><th>スポーツ</th><th>関わる能力・部位すべてに半分(+${GAIN * SPORT_WEIGHT}pt)</th></tr></thead><tbody>
+    ${SPORTS.map((x) => `<tr><td>${x.label}</td><td>${[...x.main, ...x.related].map(targetName).join('・')}</td></tr>`).join('')}
+  </tbody></table>
+  <p class="t-muted small">息が弾む運動の分数を入れた日は「有酸素」、歩数が目安以上の日は「歩く力」に全部(歩く力は+3pt)入ります。同じ日に同じ項目へ複数のトレーニングやスポーツから入るときは、一番大きい分だけが入ります。</p>`;
 }
 
 // ---------- ステータス ----------
@@ -284,7 +287,7 @@ function viewStat(key) {
   const next = s.step < MAX_STEP ? THRESH[s.step + 1] : null;
   const src = sourcesOf(def.key);
   const full = def.key === 'walk' ? `目安の歩数(${stepsTarget(ageOf(state.profile)).toLocaleString()}歩)に届いた日に+${def.gain}pt` : `${src.direct.map(trainingName).join('・')}をした日に+${GAIN}pt(前回から48時間以内は+${GAIN_SOON}pt)`;
-  const gainNote = `${full}${src.related.length ? `。${src.related.map(trainingName).join('・')}をした日にはその半分` : ''}`;
+  const gainNote = `${full}${src.related.length ? `。${src.related.map(trainingName).join('・')}をした日にはその半分` : ''}${src.sports.length ? `。スポーツ(${src.sports.join('、')})をした日も半分` : ''}`;
   const strip = s.recent.map((w, i) => `<i class="${w >= 1 ? 'on' : w > 0 ? 'half' : ''}" title="${md(lastDays(28)[i])}"></i>`).join('');
   const measured = s.tests.map((t) => t.key);
   const testsHtml = def.tests.map((tk) => {
@@ -333,8 +336,8 @@ function viewStat(key) {
 function conditionCharts(key) {
   const line = (k, ref) => { const s = series(state.measures, k); return s.length ? `<h3>${MEASURES[k].label}</h3>${lineChart({ pts: s, unit: MEASURES[k].unit, ref, id: k })}` : ''; };
   const days14 = lastDays(14);
-  const bars = (field, label, unit, ref) => {
-    const days = days14.map((date) => { const v = state.daily[date]?.[field]; return { date, value: v === undefined || v === '' || v === null ? null : Number(v) }; });
+  const bars = (field, label, unit, ref, get = (row) => row?.[field]) => {
+    const days = days14.map((date) => { const v = get(state.daily[date]); return { date, value: v === undefined || v === '' || v === null ? null : Number(v) }; });
     const c = barChart({ days, unit, ref, id: field });
     return c ? `<h3>${label}(14日)</h3>${c}` : '';
   };
@@ -350,7 +353,7 @@ function conditionCharts(key) {
       return bars('sleepH', '睡眠時間', '時間', { value: 6, label: '目安 6時間' }) + bars('rest', '睡眠休養感', '/5');
     case 'habit':
       return bars('steps', '歩数', '歩', { value: stepsTarget(age), label: `目安 ${stepsTarget(age).toLocaleString()}` })
-        + bars('exMin', '運動', '分') + bars('alcoholG', '純アルコール', 'g', { value: alcoholLimit(p.sex), label: `${alcoholLimit(p.sex)}g` })
+        + bars('exMin', '運動', '分', null, exerciseMinutes) + bars('alcoholG', '純アルコール', 'g', { value: alcoholLimit(p.sex), label: `${alcoholLimit(p.sex)}g` })
         + bars('veg', '野菜', '皿', { value: 5, label: '5皿' });
     case 'knowledge':
       return `<h3>分野ごとのマスター</h3><div class="list">${Object.entries(QUIZ_CATS).map(([c, name]) => {
@@ -407,8 +410,11 @@ function viewDaily() {
     <h3>トレーニング</h3>
     <div class="field"><span>鍛えた部位</span><div class="toggles">${TRAININGS.filter((t) => t.kind === 'part').map(toggle).join('')}</div></div>
     <div class="field"><span>そのほかのトレーニング</span><div class="toggles">${TRAININGS.filter((t) => t.kind === 'other').map(toggle).join('')}</div>
-      <small class="t-muted">息が弾む運動の分数を入れた日は「有酸素」、歩数が目安以上の日は「歩く力」も自動で記録されます</small>
+      <small class="t-muted">息が弾む運動の分数を入れた日は「有酸素」、歩数が目安以上の日は「歩く力」も自動で記録されます</small></div>
+    <div class="field"><span>スポーツ</span><div class="toggles">${SPORTS.map((x) => `<label class="tg"><input type="checkbox" name="sport" value="${x.key}" ${(d.sports ?? []).includes(x.key) ? 'checked' : ''}><span>${x.label}</span></label>`).join('')}</div>
+      <small class="t-muted">スポーツをした日は、その種目に関わる能力・部位すべてに半分のポイントが入ります</small>
       <details class="tip"><summary>どの能力にポイントが入る?</summary>${effectsTable()}</details></div>
+    <label class="field"><span>スポーツの時間<small>生活習慣の「運動」に数えます(息が弾む運動の分数と大きいほう)</small></span><span class="unit-in"><input type="number" name="sportMin" inputmode="numeric" min="0" value="${val(d.sportMin)}" placeholder="0"><em>分</em></span></label>
     <label class="field"><span>息が弾む運動</span><span class="unit-in"><input type="number" name="exMin" inputmode="numeric" min="0" value="${val(d.exMin)}" placeholder="0"><em>分</em></span></label>
     <label class="field"><span>歩数</span><span class="unit-in"><input type="number" name="steps" inputmode="numeric" min="0" value="${val(d.steps)}" placeholder="8000"><em>歩</em></span></label>
     <h3>回復</h3>
@@ -970,8 +976,10 @@ document.addEventListener('submit', (e) => {
     case 'daily-form': {
       const date = f.get('date') || today();
       const trained = f.getAll('trained').filter((t) => TRAININGS.some((x) => x.key === t));
+      const sports = f.getAll('sport').filter((t) => SPORTS.some((x) => x.key === t));
       const entry = {
         trained: trained.length ? trained : undefined,
+        sports: sports.length ? sports : undefined, sportMin: num(f.get('sportMin')),
         sleepH: num(f.get('sleepH')), rest: num(f.get('rest')), steps: num(f.get('steps')), exMin: num(f.get('exMin')),
         veg: num(f.get('veg')), protein: num(f.get('protein')),
         alcoholG: num(f.get('alcoholG')), memo: (f.get('memo') || '').trim() || undefined,
