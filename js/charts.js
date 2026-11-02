@@ -66,28 +66,56 @@ export function radar(axes, { compare = null, interactive = true, refAt = null, 
 }
 
 // 人体図(前・後ろ)。parts: {arm: {letter, label}, ...}。letter(0〜9)で塗り分け、ランクは一覧でも文字で示す
+// 人体図(前・後ろ)。体の輪郭(灰色)の上に筋肉の形を重ね、9部位をランクの色で塗る。
+// 座標は体の中心を x=0 とした右半身で書き、左右反転して全身にする
+const BODY_BASE = [
+  'M0,50 C14,52 30,52 42,58 C48,62 50,70 48,82 C44,90 38,96 36,100 C34,118 32,136 30,150 C34,160 37,170 37,180 L0,186 Z', // 胴
+  'M42,60 C50,64 54,76 54,90 C56,104 56,118 55,130 C58,148 60,166 59,184 C60,192 58,202 54,204 C50,202 48,196 49,186 C46,166 44,150 42,136 C39,122 37,108 37,98 Z', // 腕・手
+  'M2,180 C14,176 30,172 37,178 C38,200 34,222 31,240 C33,258 31,276 27,292 C30,296 31,302 27,305 L13,305 C11,300 12,296 14,292 C11,276 9,258 10,242 C7,222 4,202 2,186 Z', // 脚・足
+];
+const MUSCLES = {
+  front: [
+    ['shoulder', 'M24,56 C34,51 46,56 50,68 C52,78 50,88 46,93 C42,82 35,72 26,66 Z'], // 三角筋
+    ['chest', 'M3,62 C13,58 25,60 33,66 C39,72 41,82 37,92 C27,99 13,99 3,95 Z'], // 大胸筋
+    ['arm', 'M39,94 C45,91 52,98 53,110 C54,120 51,128 47,132 C43,127 40,117 39,107 Z'], // 上腕二頭筋
+    ['arm', 'M46,135 C52,137 57,151 58,163 C58,172 57,179 55,183 L50,183 C48,169 45,152 45,140 Z'], // 前腕
+    ['abs', 'M3,100 L17,100 C19,120 19,142 17,164 L3,168 Z'], // 腹直筋
+    ['abs', 'M20,101 C27,105 31,113 31,128 C30,142 27,152 23,160 L20,161 C21,141 21,121 20,101 Z'], // 腹斜筋
+    ['quad', 'M5,184 C13,177 28,175 34,182 C36,198 34,218 28,234 C22,239 14,239 10,235 C6,216 4,198 5,184 Z'], // 大腿四頭筋
+  ],
+  back: [
+    ['back', 'M2,52 C14,54 26,56 34,60 C28,68 16,78 2,98 Z'], // 僧帽筋
+    ['shoulder', 'M26,58 C36,53 46,57 50,68 C52,78 50,88 46,93 C42,82 36,74 30,70 Z'], // 三角筋(後ろ)
+    ['back', 'M3,100 C14,84 26,72 35,72 C38,86 36,102 32,118 C28,132 22,146 3,156 Z'], // 広背筋・脊柱起立筋
+    ['arm', 'M39,94 C45,91 52,98 53,110 C54,120 51,128 47,132 C43,127 40,117 39,107 Z'], // 上腕三頭筋
+    ['arm', 'M46,135 C52,137 57,151 58,163 C58,172 57,179 55,183 L50,183 C48,169 45,152 45,140 Z'], // 前腕
+    ['glute', 'M3,160 C14,155 30,157 35,169 C37,183 31,195 19,197 C11,197 5,193 3,189 Z'], // 大殿筋
+    ['ham', 'M6,201 C14,198 26,198 32,202 C34,215 32,228 28,238 L12,238 C8,226 6,213 6,201 Z'], // ハムストリング
+    ['calf', 'M11,245 C17,240 26,240 30,247 C32,259 30,272 26,283 L16,283 C12,273 10,259 11,245 Z'], // 下腿三頭筋
+  ],
+};
+// 筋肉の境目の線(飾り。タップの邪魔をしない)
+const MUSCLE_LINES = {
+  front: ['M3,118 L18,118 M3,136 L18,136 M3,152 L18,152', 'M19,186 C22,204 22,220 19,234'],
+  back: ['M3,128 C12,124 22,118 30,112', 'M19,203 L19,236'],
+};
+
 export function bodyMap(parts) {
   const fill = (k) => (parts[k]?.letter === null || parts[k]?.letter === undefined ? 'bm-none' : `bm-${parts[k].letter}`);
-  const shape = (k, el) => el.replace('/>', ` class="bm-part ${fill(k)}" data-action="detail" data-stat="part:${k}"><title>${esc(parts[k]?.name ?? '')} ${esc(parts[k]?.label ?? '')}</title></${el.match(/^<(\w+)/)[1]}>`);
-  const figure = (cx, side) => {
-    const limbs = (k, x, y, w, h) => [
-      shape(k, `<rect x="${cx - x - w}" y="${y}" width="${w}" height="${h}" rx="${w / 2}" />`),
-      shape(k, `<rect x="${cx + x}" y="${y}" width="${w}" height="${h}" rx="${w / 2}" />`),
-    ].join('');
-    const torso = side === 'front'
-      ? shape('chest', `<rect x="${cx - 30}" y="58" width="60" height="42" rx="12" />`)
-        + shape('abs', `<rect x="${cx - 24}" y="104" width="48" height="56" rx="10" />`)
-      : shape('back', `<rect x="${cx - 30}" y="58" width="60" height="102" rx="12" />`);
-    const hips = side === 'back' ? shape('glute', `<rect x="${cx - 28}" y="164" width="56" height="30" rx="14" />`) : '';
-    // すね(前の下腿)は部位に含めないので色を付けない
-    const shins = [`<rect x="${cx - 24}" y="240" width="20" height="62" rx="10" class="bm-off" />`, `<rect x="${cx + 4}" y="240" width="20" height="62" rx="10" class="bm-off" />`].join('');
-    return `<circle cx="${cx}" cy="30" r="18" class="bm-head" />
-      ${shape('shoulder', `<circle cx="${cx - 40}" cy="70" r="14" />`)}${shape('shoulder', `<circle cx="${cx + 40}" cy="70" r="14" />`)}
-      ${torso}${hips}
-      ${limbs('arm', 36, 86, 16, 52)}${limbs('arm', 40, 142, 14, 50)}
-      ${side === 'front' ? `${limbs('quad', 2, 166, 25, 70)}${shins}` : `${limbs('ham', 2, 198, 25, 58)}${limbs('calf', 4, 260, 20, 50)}`}
-      <text x="${cx}" y="326" text-anchor="middle" class="t-sub">${side === 'front' ? '前' : '後ろ'}</text>`;
-  };
+  const title = (k) => `<title>${esc(parts[k]?.name ?? '')} ${esc(parts[k]?.label ?? '')}</title>`;
+  // 輪郭は「線だけの層」を先に描いてから塗りの層を重ね、左右の継ぎ目に線が出ないようにする
+  const outline = BODY_BASE.map((d) => `<path d="${d}" class="bm-outline" />`).join('');
+  const half = (side) => [
+    ...BODY_BASE.map((d) => `<path d="${d}" class="bm-base" />`),
+    ...MUSCLES[side].map(([k, d]) => `<path d="${d}" class="bm-part ${fill(k)}" data-action="detail" data-stat="part:${k}">${title(k)}</path>`),
+    ...MUSCLE_LINES[side].map((d) => `<path d="${d}" class="bm-line" />`),
+  ].join('');
+  const head = (cls) => `<ellipse cx="0" cy="24" rx="14" ry="17" class="${cls}" /><rect x="-7" y="36" width="14" height="18" rx="4" class="${cls}" />`;
+  const figure = (cx, side) => `<g transform="translate(${cx} 0)">
+      ${head('bm-outline')}<g>${outline}</g><g transform="scale(-1 1)">${outline}</g>
+      ${head('bm-base')}<g>${half(side)}</g><g transform="scale(-1 1)">${half(side)}</g>
+      <text x="0" y="326" text-anchor="middle" class="t-sub">${side === 'front' ? '前' : '後ろ'}</text>
+    </g>`;
   return `<svg viewBox="0 0 340 334" class="chart bodymap" role="img" aria-label="部位ごとのランクの人体図">
     ${figure(88, 'front')}${figure(252, 'back')}
   </svg>`;

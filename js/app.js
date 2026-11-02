@@ -258,7 +258,7 @@ function viewBody() {
   const parts = Object.fromEntries(PARTS.map((p) => [p.key, { name: p.name, letter: letterOf(phys.parts[p.key].step), label: rankLabel(phys.parts[p.key].step) }]));
   return `<div class="sheet" role="dialog" aria-label="筋力の詳細">
     <header class="sheet-head"><button class="btn ghost" data-action="close">‹ 戻る</button><h2>筋力</h2><span></span></header>
-    <section class="card score-head">${badge(str.step, true)}<div><p class="score-num">${rankLabel(str.step)}</p><p class="t-muted">6部位のランクの平均</p></div></section>
+    <section class="card score-head">${badge(str.step, true)}<div><p class="score-num">${rankLabel(str.step)}</p><p class="t-muted">9部位のランクの平均</p></div></section>
     <section class="card">${bodyMap(parts)}${rankScale()}<p class="t-muted center small">部位をタップすると詳細</p></section>
     <section class="card list">${PARTS.map((p) => {
       const s = phys.parts[p.key];
