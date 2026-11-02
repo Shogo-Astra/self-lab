@@ -82,7 +82,9 @@ function sampleBlock(lines) {
   const cols = [0, 1, 2, 3].map((k) => lines.slice(idx[k] + 1, idx[k + 1]).map((l) => l.trim()));
   const same = (a) => a.every((c) => c.length === a[0].length);
   const dense = cols.map((c) => c.filter((l) => l !== ''));
-  const [src, val, start, dur] = same(cols) && cols[0].every((l) => l !== '') ? cols : dense;
+  let [src, val, start, dur] = same(cols) && cols[0].every((l) => l !== '') ? cols : dense;
+  // 睡眠のサンプルでは「ソース」が空で来る(2026-11-02 実機)。ほかの3つがそろっていれば、ソース不明として読む
+  if (!src.length && val.length && same([val, start, dur])) src = val.map(() => '');
   if (!same([src, val, start, dur])) return null;
   return src.map((name, i) => ({ src: name, raw: val[i], value: firstNumber(val[i]) ?? 0, start: timeOfDay(start[i]), at: dateTime(start[i]), dur: seconds(dur[i]) ?? 0 }));
 }
