@@ -78,8 +78,12 @@ function sampleBlock(lines) {
   const names = ['#src', '#val', '#start', '#dur', '#end'];
   const idx = names.map((n) => lines.findIndex((l) => l.trim() === n));
   if (idx.some((i, k) => i < 0 || (k && i <= idx[k - 1]))) return null;
-  const [src, val, start, dur] = [0, 1, 2, 3].map((k) => lines.slice(idx[k] + 1, idx[k + 1]).map((l) => l.trim()).filter((l) => l !== ''));
-  if ([val, start, dur].some((a) => a.length !== src.length)) return null;
+  // 値が空のサンプルもあるので、まず空行も残したまま4つの長さがそろうかを見て、そろわなければ空行を除いて見る
+  const cols = [0, 1, 2, 3].map((k) => lines.slice(idx[k] + 1, idx[k + 1]).map((l) => l.trim()));
+  const same = (a) => a.every((c) => c.length === a[0].length);
+  const dense = cols.map((c) => c.filter((l) => l !== ''));
+  const [src, val, start, dur] = same(cols) && cols[0].every((l) => l !== '') ? cols : dense;
+  if (!same([src, val, start, dur])) return null;
   return src.map((name, i) => ({ src: name, raw: val[i], value: firstNumber(val[i]) ?? 0, start: timeOfDay(start[i]), at: dateTime(start[i]), dur: seconds(dur[i]) ?? 0 }));
 }
 
@@ -126,11 +130,12 @@ export function mergeSteps(samples) {
 
 // 睡眠のサンプル(ショートカット v7〜)。v6 の「値がベッド内でも覚醒でもない」という検索条件では0件になり
 // (2026-11-02 実機:条件なしの合計 5時間58分、ヘルスケアアプリの睡眠 5時間44分)、Self Lab 側で分けることにした。
-// 値の文字(英語・日本語)か、HealthKit の番号(0=ベッド内、2=覚醒)で分け、それ以外(コア・深い・レム・睡眠中)を睡眠として数える
+// 値の文字(英語・日本語)か、HealthKit の番号(0=ベッド内、2=覚醒)で分け、それ以外(コア・深い・レム・睡眠)を睡眠として数える。
+// 日本語の表示は In Bed=就寝・Awake=覚醒・Core=コア・Deep=深い・Asleep=睡眠(macOS の ActionKit の Localizable.loctable で確認、2026-11-02)
 export const SLEEP_MARK = '#sleep-samples';
 export function sleepStage(raw) {
   const s = String(raw ?? '').trim();
-  if (/ベッド|in\s*bed/i.test(s) || s === '0') return 'bed';
+  if (/就寝|ベッド|in\s*bed/i.test(s) || s === '0') return 'bed';
   if (/覚醒|起き|awake/i.test(s) || s === '2') return 'awake';
   return 'asleep';
 }

@@ -343,7 +343,7 @@ select {
 .guide { padding-left: 20px; font-size: 14px; }
 .guide li { margin-bottom: 10px; }
 .guide b { display: block; }
-.tmpl { background: var(--surface-0); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; font-size: 13px; overflow-x: auto; }
+.tmpl { background: var(--surface-0); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; font-size: 13px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
 
 /* フレンド */
 .fcard { margin-bottom: 8px; }

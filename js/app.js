@@ -583,7 +583,10 @@ function startHealthImport(text) {
   const cuts = [raw.indexOf(SAMPLE_MARK), raw.indexOf(SLEEP_MARK)].filter((i) => i >= 0);
   const note = [raw.includes(SAMPLE_MARK) && (parsed.steps ? `歩数のサンプル${parsed.steps.n}件` : '歩数のサンプル(読み取れず)'),
     raw.includes(SLEEP_MARK) && (parsed.sleep ? `睡眠のサンプル${parsed.sleep.n}件` : '睡眠のサンプル(0件か読み取れず)')].filter(Boolean);
-  const shown = cuts.length ? `${raw.slice(0, Math.min(...cuts))}#(${note.join('、')}は省略)` : raw;
+  // 睡眠のサンプルを読み取れなかったときは、原因を確かめられるように睡眠の部分をそのまま見せる
+  const sleepAt = raw.indexOf(SLEEP_MARK);
+  const sleepRaw = sleepAt >= 0 && parsed.skipped.some((x) => x.startsWith('睡眠(')) ? `\n${raw.slice(sleepAt, sleepAt + 4000)}` : '';
+  const shown = cuts.length ? `${raw.slice(0, Math.min(...cuts))}#(${note.join('、')}は省略)${sleepRaw}` : raw;
   ui.health = { ...parsed, day, suspicious: n >= 3 ? same : null, raw: shown.slice(0, 6000) };
   render(); $('#sheet').scrollTop = 0;
 }
