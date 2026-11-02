@@ -461,3 +461,9 @@ body.sheet-open #tabs { display: none; }
 .om-actions { display: grid; grid-template-columns: 1fr 1.4fr; gap: 8px; margin: 0 0 12px; }
 .om-actions .btn { margin: 0; }
 .om-safe p { font-size: 13px; }
+
+/* けが・痛み・体調のケア(v1.1) */
+.care-card { border-color: color-mix(in srgb, var(--warn-text) 45%, var(--border)); }
+.om-issue { margin-top: 10px; }
+.list .row.care { grid-template-columns: 1fr auto; }
+.list .row.care .row-name small { margin-left: 0; margin-top: 2px; display: table; }

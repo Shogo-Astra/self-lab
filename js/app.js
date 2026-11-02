@@ -11,11 +11,12 @@ import { encodeCard, decodeCard, findCode, newId, upgradeParts } from './share.j
 import { CHANGELOG, isNewer } from './changelog.js';
 import { HEALTH_KEYS, HEALTH_TEMPLATE, SAMPLE_MARK, SLEEP_MARK, parseHealth } from './health.js';
 import { normFor } from './norms.js';
-import { buildPlan, planRecord, PLACES, TIMES, COUNTS, FOCUSES, DEFAULT_PREFS } from './omakase.js';
+import { buildPlan, planRecord, PLACES, TIMES, COUNTS, FOCUSES, DEFAULT_PREFS, AVOID_NAME } from './omakase.js';
+import { AREAS, ISSUE_TYPES, CATS, typeOf, areaOf, activeOn, careForPlan, issueTitle } from './care.js';
 
 const VERSION = CHANGELOG[0].version;
 const KEY = 'sp-health-v1';
-const DEFAULT = { v: 1, profile: null, measures: [], daily: {}, quiz: {}, targets: {}, xp: 0, awarded: {}, me: null, friends: {}, selfInit: null, decayNotified: [], seenVersion: null, healthLast: null, omakase: null };
+const DEFAULT = { v: 1, profile: null, measures: [], daily: {}, quiz: {}, targets: {}, xp: 0, awarded: {}, me: null, friends: {}, selfInit: null, decayNotified: [], seenVersion: null, healthLast: null, omakase: null, issues: [] };
 
 // ---------- 保存 ----------
 
@@ -42,7 +43,7 @@ function status() {
 
 const ui = {
   tab: state.profile ? 'home' : 'settings', logMode: 'daily', logDate: isoDate(new Date()),
-  detail: null, quiz: null, friend: null, incoming: null, setup: false, health: null, healthGuide: false, omakase: null,
+  detail: null, quiz: null, friend: null, incoming: null, setup: false, health: null, healthGuide: false, omakase: null, issue: null,
 };
 // iPhoneではホーム画面のアプリとSafariで保存場所が別になる
 const standalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
@@ -153,6 +154,7 @@ function viewHome() {
     <div class="xpbar" role="progressbar" aria-valuemin="0" aria-valuemax="${lv.need}" aria-valuenow="${lv.into}"><i style="width:${(lv.into / lv.need) * 100}%"></i></div>
     <p class="t-muted">次のレベルまで ${lv.need - lv.into} XP ・ 連続記録 ${streak()} 日</p>
   </section>
+  ${careCard()}
   ${omakaseCard()}
   ${state.selfInit ? '' : `<button class="card cta" data-action="setup-open">自己評価で、今の自分のランクを決めましょう <b>はじめる</b></button>`}
   ${decayInfo(phys)}
@@ -396,6 +398,73 @@ function radios(name, opts, cur) {
 }
 const val = (v) => (v === undefined || v === null ? '' : esc(v));
 
+// ---------- けが・痛み・体調のケア(care.js) ----------
+
+const partNames = (keys) => keys.map((k) => PARTS.find((p) => p.key === k)?.name ?? k).join('・');
+const dayN = (start) => Math.round((Date.parse(`${today()}T00:00Z`) - Date.parse(`${start}T00:00Z`)) / 86400000) + 1;
+
+// ホーム:記録中のけが・痛み・体調
+function careCard() {
+  const act = activeOn(state.issues, today());
+  if (!act.length) return '';
+  return `<section class="card care-card"><div class="card-head"><h3>ケア中</h3><span class="t-muted small">良くなったら「治った」を</span></div>
+    <div class="list">${act.map((x) => {
+      const t = typeOf(x.type); const n = dayN(x.start);
+      const tag = t.cat === 'injury' && areaOf(x.area)?.parts.length ? '<span class="state bad">けが・減少1%/日</span>' : t.cat === 'condition' ? '<span class="state warn">休養</span>' : '<span class="state muted">痛み</span>';
+      return `<button class="row care" data-action="issue-open" data-id="${x.id}"><span class="row-name">${esc(issueTitle(x))}<small>${n}日目${t.days && n > t.days ? '・目安の日数を過ぎました' : ''}</small></span>${tag}</button>`;
+    }).join('')}</div>
+  </section>`;
+}
+
+function viewIssue() {
+  const u = ui.issue;
+  if (u.id) {
+    const x = state.issues.find((i) => i.id === u.id);
+    if (!x) { ui.issue = null; return ''; }
+    const t = typeOf(x.type); const a = areaOf(x.area);
+    const n = dayN(x.start); const ended = !!x.end;
+    const care = t.cat === 'condition' || !a ? null : a;
+    const rule = t.cat === 'injury'
+      ? (a?.parts.length ? `けがを記録している間は、${partNames(a.parts)}のポイントが毎日1%ずつ減ります(ランク・日数に関係なく、治ったと記録するまで)。けがをしないことが一番です。` : 'この場所のけがでは、ポイントは減りません。')
+      : t.cat === 'pain' ? '痛みの記録では、ポイントは減りません。' : '体調の記録では、ポイントは減りません。';
+    const plan = t.cat === 'condition' ? 'おまかせは、メニューを出さずに休養をすすめます。' : care ? `おまかせでは、${care.avoid.map((k) => AVOID_NAME[k] ?? k).join('・')}を使う種目を外します。` : '';
+    return `<div class="sheet" role="dialog" aria-label="${esc(issueTitle(x))}">
+      <header class="sheet-head"><button class="btn ghost" data-action="issue-close">‹ 閉じる</button><h2>ケア</h2><span></span></header>
+      <section class="card"><div class="card-head"><h3>${esc(issueTitle(x))}</h3>${ended ? `<span class="state good">${md(x.end)} 治った</span>` : `<span class="t-muted small">${n}日目</span>`}</div>
+        <p class="t-muted small">${md(x.start)} から${x.memo ? `・${esc(x.memo)}` : ''}</p>
+        <p class="small">${esc(rule)}${plan ? ` ${esc(plan)}` : ''}</p></section>
+      <section class="card"><h3>回復の目安</h3>
+        ${t.span ? `<p>${esc(t.span)}</p>` : '<p class="t-muted">日数の目安は、出典で確かめられたものがないため出していません。下の受診の目安を参考にしてください。</p>'}
+        ${!ended && t.days && n > t.days ? '<p class="chk small">目安の日数を過ぎました。良くならない場合は、下の受診の目安を確かめてください。</p>' : ''}</section>
+      <section class="card"><h3>すること</h3><ul class="ex">${t.care.map((c) => `<li>${esc(c)}</li>`).join('')}</ul></section>
+      ${t.see.length ? `<section class="card"><h3>受診の目安</h3><ul class="ex">${t.see.map((c) => `<li>${esc(c)}</li>`).join('')}</ul></section>` : ''}
+      <section class="card info"><p class="small">一般的な目安で、診断ではありません。迷ったときや心配なときは、医療機関に相談してください。</p>${srcList([...t.src, ...(t.cat === 'injury' ? ['app'] : [])])}</section>
+      <div class="om-actions">
+        <button class="btn" data-action="issue-del" data-id="${x.id}">記録を消す</button>
+        ${ended ? '' : `<button class="btn primary" data-action="issue-heal" data-id="${x.id}">治った</button>`}
+      </div>
+    </div>`;
+  }
+  // 新しく記録する
+  const cats = CATS.map(([v, l]) => [v, l]);
+  const types = ISSUE_TYPES.filter((t) => t.cat === u.cat);
+  const seg = (key, opts, cur) => `<div class="seg opt">${opts.map(([v, l]) => `<button type="button" class="${cur === v ? 'on' : ''}" data-action="issue-pick" data-key="${key}" data-val="${v}">${esc(l)}</button>`).join('')}</div>`;
+  const body = u.cat !== 'condition';
+  const past = [...state.issues].sort((a, b) => (a.start < b.start ? 1 : -1)).slice(0, 10);
+  return `<div class="sheet" role="dialog" aria-label="不安なところを記録">
+    <header class="sheet-head"><button class="btn ghost" data-action="issue-close">‹ 閉じる</button><h2>不安を記録</h2><span></span></header>
+    <section class="card form">
+      <div class="field"><span>種類<small>けが:捻挫・肉離れなど(部位のポイントが減ります)/ 痛み:筋肉痛・違和感など / 体調:熱・だるさなど</small></span>${seg('cat', cats, u.cat)}</div>
+      ${body ? `<div class="field"><span>場所</span>${seg('area', AREAS.map((a) => [a.key, a.name]), u.area)}</div>` : ''}
+      <div class="field"><span>${body ? '内容' : '体調'}</span>${seg('type', types.map((t) => [t.key, t.name]), u.type)}</div>
+      <label class="field"><span>始まった日</span><input type="date" id="issue-start" value="${u.start}" max="${today()}"></label>
+      <label class="field last"><span>メモ<small>任意(右・左、きっかけなど)</small></span><input type="text" id="issue-memo" maxlength="40" value="${esc(u.memo ?? '')}"></label>
+      <button class="btn primary wide" data-action="issue-save">記録する</button>
+    </section>
+    ${past.length ? `<section class="card"><h3>これまでの記録</h3><div class="list">${past.map((x) => `<button class="row care" data-action="issue-open" data-id="${x.id}"><span class="row-name">${esc(issueTitle(x))}<small>${md(x.start)}〜${x.end ? md(x.end) : ''}</small></span>${x.end ? '<span class="state good">治った</span>' : '<span class="state warn">ケア中</span>'}</button>`).join('')}</div></section>` : ''}
+  </div>`;
+}
+
 // ---------- おまかせ(今日のトレーニングを決める) ----------
 
 const omName = (k) => (k === 'cardio' ? '持久力' : targetName(k));
@@ -405,21 +474,34 @@ const omTone = (why) => OM_TONE[why] ?? (why.startsWith('あと') ? 'warn' : 'mu
 
 function omakaseCard() {
   const row = state.daily[today()];
+  const care = careForPlan(state.issues, today());
   const done = (row?.trained ?? []).flatMap((t) => (t === 'leg' ? LEG_KEYS : [t]));
   return `<section class="card om-card">
     <div class="card-head"><h3>今日のトレーニング</h3>${done.length ? '<span class="state good">記録済み</span>' : ''}</div>
     <p class="t-muted">${done.length ? `今日:${done.map(trainingName).join('、')}` : '決める余裕がない日は、おまかせで。回復中の部位を避けて、減りそうな項目や弱みから選びます'}</p>
+    ${care.rest.length ? `<p class="chk small">体調の記録(${esc(care.rest.join('、'))})があるため、今日は休養をおすすめします</p>` : care.why.length ? `<p class="t-muted small">${esc(care.why.join('・'))}に負担がかかる種目は外して選びます</p>` : ''}
     <div class="om-btns">
       <button class="btn primary" data-action="omakase" data-mode="auto"><b>完全おまかせ</b><small>${placeName(state.omakase?.place ?? DEFAULT_PREFS.place)}で約${DEFAULT_PREFS.time}分</small></button>
       <button class="btn" data-action="omakase" data-mode="custom"><b>条件を選ぶ</b><small>時間・場所・種目数</small></button>
     </div>
+    <button class="btn ghost small wide om-issue" data-action="issue-new">けが・痛み・体調の不安を記録する ›</button>
   </section>`;
 }
 
-const currentPlan = () => buildPlan(status().phys, ui.omakase.prefs, `${today()}#${ui.omakase.reroll}`, ui.omakase.reroll);
+const currentPlan = () => buildPlan(status().phys, ui.omakase.prefs, `${today()}#${ui.omakase.reroll}`, ui.omakase.reroll, careForPlan(state.issues, today()));
 
 function viewOmakase() {
   const o = ui.omakase;
+  const care = careForPlan(state.issues, today());
+  if (care.rest.length && !o.force) {
+    return `<div class="sheet" role="dialog" aria-label="今日のトレーニング">
+      <header class="sheet-head"><button class="btn ghost" data-action="close">‹ 閉じる</button><h2>今日のメニュー</h2><span></span></header>
+      <section class="card info"><h3>今日は休養をおすすめします</h3>
+        <p>体調の記録(${esc(care.rest.join('、'))})があります。運動前の体調確認で1つでも当てはまるときは、無理に運動をせず休養をとり、必要に応じて医療機関を受診しましょう。休むのもトレーニングのうちです。</p>
+        <p class="t-muted small">良くなったら、ホームの「ケア中」から「治った」を押してください。</p>
+        ${srcList(['pa2023'])}</section>
+    </div>`;
+  }
   const plan = currentPlan();
   const p = plan.prefs;
   o.done ??= plan.items.map(() => true);
@@ -454,6 +536,7 @@ function viewOmakase() {
     <section class="card om-plan">
       <div class="card-head"><h3>メニュー</h3><span class="t-muted small">合計 約${plan.total}分・休み ${plan.rest}秒</span></div>
       ${plan.notes.map((t) => `<p class="chk small">${esc(t)}</p>`).join('')}
+      ${care.why.length ? '<p class="t-muted small">準備運動・ストレッチも、痛む所は動かさず・伸ばさないでください。</p>' : ''}
       ${rows}
       <p class="t-muted small">やらなかった種目はチェックを外してから記録してください。チェックした種目の部位が、今日のチェックインに入ります。</p>
     </section>
@@ -931,7 +1014,7 @@ function changelogSection() {
 function render() {
   const views = { home: viewHome, log: viewLog, learn: viewLearn, friends: viewFriends, settings: viewSettings };
   $('#main').innerHTML = views[ui.tab]();
-  const sheet = ui.incoming ? viewIncoming() : ui.health ? viewHealthImport() : ui.healthGuide ? viewHealthGuide() : ui.setup && state.profile ? viewSetup() : ui.omakase && status() ? viewOmakase() : ui.friend ? viewFriend(ui.friend) : ui.detail && status() ? viewDetail(ui.detail) : '';
+  const sheet = ui.incoming ? viewIncoming() : ui.health ? viewHealthImport() : ui.healthGuide ? viewHealthGuide() : ui.setup && state.profile ? viewSetup() : ui.issue ? viewIssue() : ui.omakase && status() ? viewOmakase() : ui.friend ? viewFriend(ui.friend) : ui.detail && status() ? viewDetail(ui.detail) : '';
   $('#sheet').innerHTML = sheet;
   const notes = ui.incoming ? [] : unseenNotes();
   $('#modal').innerHTML = notes.length ? viewWhatsNew(notes) : '';
@@ -1018,6 +1101,36 @@ const actions = {
   },
   'om-custom': () => { ui.omakase.mode = 'custom'; render(); },
   'om-reroll': () => { ui.omakase.reroll++; ui.omakase.done = null; render(); },
+  'issue-new': () => { ui.omakase = null; ui.issue = { cat: 'injury', area: null, type: null, start: today(), memo: '' }; render(); $('#sheet').scrollTop = 0; },
+  'issue-pick': (el) => {
+    const u = ui.issue;
+    u.start = $('#issue-start')?.value || u.start; u.memo = $('#issue-memo')?.value ?? u.memo;
+    u[el.dataset.key] = el.dataset.val;
+    if (el.dataset.key === 'cat') { u.type = null; if (u.cat === 'condition') u.area = null; }
+    render();
+  },
+  'issue-save': () => {
+    const u = ui.issue;
+    const start = $('#issue-start').value || today();
+    if (u.cat !== 'condition' && !u.area) { toast('場所を選んでください'); return; }
+    if (!u.type) { toast(u.cat === 'condition' ? '体調を選んでください' : '内容を選んでください'); return; }
+    const x = { id: `${Date.now().toString(36)}`, type: u.type, area: u.cat === 'condition' ? null : u.area, start: start > today() ? today() : start, end: null, memo: $('#issue-memo').value.trim().slice(0, 40) };
+    state.issues = [...(state.issues ?? []), x];
+    save(); ui.issue = { id: x.id }; render(); $('#sheet').scrollTop = 0;
+  },
+  'issue-open': (el) => { ui.issue = { id: el.dataset.id }; render(); $('#sheet').scrollTop = 0; },
+  'issue-close': () => { ui.issue = null; render(); },
+  'issue-heal': (el) => {
+    const x = state.issues.find((i) => i.id === el.dataset.id);
+    if (!x) return;
+    x.end = today() > x.start ? today() : x.start;
+    save(); ui.issue = null; toast('よかったです。少しずつ戻していきましょう'); render();
+  },
+  'issue-del': (el) => {
+    if (!confirm('この記録を消しますか?(けがの記録を消すと、ポイントの減少もさかのぼって取り消されます)')) return;
+    state.issues = state.issues.filter((i) => i.id !== el.dataset.id);
+    save(); ui.issue = null; render();
+  },
   'om-record': () => {
     const plan = currentPlan();
     const { trained, cardioMin } = planRecord(plan, ui.omakase.done ?? plan.items.map(() => true));

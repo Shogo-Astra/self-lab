@@ -93,6 +93,7 @@ function rng(seedText) {
   };
 }
 
+export const AVOID_NAME = { arm: '腕', shoulder: '肩', chest: '胸', back: '背中', abs: '腹', glute: 'お尻', quad: '太もも前', ham: '太もも裏', calf: 'ふくらはぎ', power: 'ジャンプ・ダッシュ', agility: '切り返し', balance: '片脚立ち', cardio: '有酸素(走る・歩く・踏み台)' };
 const statusOf = (phys, key) => phys.parts[key] ?? phys.abilities[STATUS_KEY[key] ?? key];
 
 // 優先度。理由(why)は画面に出す。jitter はゆらぎの大きさ(「別のメニュー」を押すほど大きくして、違う種目が出やすくする)
@@ -121,14 +122,16 @@ function doseText(ex, sets, minutes) {
 }
 
 // phys:physicalStatus の結果、prefs:{ time, place, count, focus }、seed:乱数の元(日付+回数)
-export function buildPlan(phys, prefs, seed, reroll = 0) {
+// care:けが・痛みの記録から外す鍛える所(care.js の careForPlan。{ avoid, why })
+export function buildPlan(phys, prefs, seed, reroll = 0, care = { avoid: [], why: [] }) {
   const p = { ...DEFAULT_PREFS, ...prefs };
   const pre = PRESETS[p.time] ?? PRESETS[20];
   const rnd = rng(`${seed}|${p.time}|${p.place}|${p.count}|${p.focus}`);
-  const pool = EXERCISES.filter((e) => e.places.includes(p.place));
+  const avoid = new Set(care.avoid);
+  const pool = EXERCISES.filter((e) => e.places.includes(p.place) && !e.targets.some((t) => avoid.has(t)));
 
   // 候補:部位9つ+瞬発力・敏捷性・バランス(短い時間のときは有酸素も種目の1つとして候補にする)
-  let keys = [...PART_KEYS, 'power', 'agility', 'balance', ...(pre.cardio ? [] : ['cardio'])];
+  let keys = [...PART_KEYS, 'power', 'agility', 'balance', ...(pre.cardio ? [] : ['cardio'])].filter((k) => !avoid.has(k));
   if (p.focus) keys = keys.filter((k) => FOCUS[p.focus].includes(k));
   keys = keys.filter((k) => pool.some((e) => e.targets[0] === k || (e.targets.includes(k) && PART_KEYS.includes(k))));
   const steps = keys.map((k) => statusOf(phys, k).step);
@@ -174,8 +177,9 @@ export function buildPlan(phys, prefs, seed, reroll = 0) {
     items.push({ type: x.type, slot: true, key: x.ex.key, name: x.ex.name, how: x.ex.how, easier: x.ex.easier, targets: x.ex.targets,
       dose: doseText(x.ex, x.sets, Math.round(x.min)), min: x.min, why: x.why, recovering: x.recovering });
   }
-  if (pre.cardio) {
-    const ex = pool.filter((e) => e.kind === 'cardio').sort(() => rnd() - 0.5)[0];
+  const cardioEx = pool.filter((e) => e.kind === 'cardio').sort(() => rnd() - 0.5)[0];
+  if (pre.cardio && cardioEx) {
+    const ex = cardioEx;
     const cp = priority(phys, 'cardio', avg, min, rnd);
     items.push({ type: 'cardio', key: ex.key, name: ex.name, how: ex.how, targets: ex.targets, dose: doseText(ex, 0, pre.cardio), min: pre.cardio, why: cp.why });
   }
@@ -183,6 +187,8 @@ export function buildPlan(phys, prefs, seed, reroll = 0) {
 
   const total = Math.round(items.reduce((a, x) => a + x.min, 0));
   const notes = [];
+  if (care.why.length) notes.push(`${care.why.join('・')}のため、${[...avoid].map((k) => AVOID_NAME[k] ?? k).join('・')}を使う種目を外しました。痛みが出る動きはやめてください`);
+  if (pre.cardio && !cardioEx) notes.push('けがの部位に負担がかかるため、有酸素運動は入れていません');
   if (picked.length < count) notes.push(`この場所でできる種目が足りないため、${picked.length}種目にしました`);
   if (total > p.time + 3) notes.push(`種目が多いため、予定より長い約${total}分になります。時間がなければ種目を減らしてください`);
   if (picked.some((x) => x.recovering)) notes.push('回復中の部位も入っています。きつければ軽めに');

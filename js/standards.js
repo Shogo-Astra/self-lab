@@ -3,6 +3,7 @@
 // ランク・ポイント・天井・減少の数値はゲーム用の約束ごとで、医学的な判定ではない。
 
 import { NORM_SOURCE } from './norms.js';
+import { injuredParts } from './care.js';
 
 export const SOURCES = {
   pa2023: { name: '健康づくりのための身体活動・運動ガイド2023', org: '厚生労働省' },
@@ -45,6 +46,17 @@ export const SOURCES = {
     name: 'Garber CE, et al. Med Sci Sports Exerc. 2011;43:1334-59(ACSM Position Stand)', org: '柔軟性運動:週2〜3日以上、1回10〜30秒保持',
     check: '柔軟性運動の頻度・保持時間の記載を原文で確認',
   },
+  // けが・体調のケア(care.js)
+  tebiki4: { name: '抗微生物薬適正使用の手引き 第四版 医科・外来編(2026年1月16日)「感冒」', org: '厚生労働省' },
+  jsoa2: { name: 'スポーツ損傷シリーズ 2. 足首の捻挫(足関節捻挫)', org: '日本整形外科スポーツ医学会 監修(日本スポーツ整形外科学会・日本整形外科学会のサイトで公開)' },
+  jsoa3: { name: 'スポーツ損傷シリーズ 3. スポーツ外傷の応急処置(RICE処置)', org: '日本整形外科スポーツ医学会 監修' },
+  jsoa5: { name: 'スポーツ損傷シリーズ 5. 肉離れ', org: '日本整形外科スポーツ医学会 監修' },
+  joaBack: { name: '症状・病気をしらべる「ぎっくり腰」「腰痛」', org: '日本整形外科学会' },
+  joaNeck: { name: '症状・病気をしらべる「寝違え」', org: '日本整形外科学会' },
+  joaFinger: { name: '症状・病気をしらべる「突き指」', org: '日本整形外科学会' },
+  uchida2025: { name: 'Uchida Y, et al. Severity-dependent recovery time in acute lateral ankle sprains. J Exp Orthop. 2025;12(1):e70204', org: '足首の捻挫の重症度別の回復日数(1度 14.5日、2度 43.2日、3度 45.6日)' },
+  ranchordas2020: { name: 'Ranchordas MK, et al. Antioxidants for preventing and reducing muscle soreness after exercise: a Cochrane systematic review. Br J Sports Med. 2020;54(2):74-78', org: '筋肉痛の経過(24〜72時間でピーク、5〜7日で消える)' },
+  cheung2003: { name: 'Cheung K, et al. Delayed onset muscle soreness: treatment strategies and performance factors. Sports Med. 2003;33(2):145-64', org: '強い筋肉痛のあと1〜2日は運動の強さと時間を減らす' },
   app: { name: 'アプリ独自のルール', org: 'ランク・ポイント・天井・減少の数値はゲーム用の約束ごと(医学的な判定ではない)' },
 };
 
@@ -77,6 +89,9 @@ export const GAIN = 10;
 export const GAIN_SOON = 5; // 前回から48時間以内(回復途中)
 export const WEEK_CAP = 30; // 7日間で得られる上限
 export const DECAY_RATE = 0.01; // C−を超えた分の1%/日
+// けが(care.js の cat: 'injury')を記録している間は、その部位のポイントが日数・ランクに関係なく毎日1%減る
+// (2026-11-02 ユーザーが決定:けがをしないことが一番大事なので、少しだけ減少を速める。身体能力は減らさず部位だけ)
+export const INJURY_DECAY = 0.01;
 
 // ---------- 項目 ----------
 
@@ -386,6 +401,7 @@ function replay(def, st, days, age, sers) {
   const base = Math.max(SELF_BASE_CEIL, self ?? 0);
   let pts = 0; let last = null; let anchor = null; let ceil = NO_MEASURE_CEIL;
   const gains = []; const history = [];
+  const isPart = PARTS.some((p) => p.key === def.key);
   days.forEach((d, i) => {
     if (i === selfIdx) { pts = Math.max(pts, THRESH[self]); anchor = i; }
     // その日までの測定で天井を決める
@@ -399,15 +415,17 @@ function replay(def, st, days, age, sers) {
     const cap = ceil >= MAX_STEP ? Infinity : THRESH[ceil + 1] - 1e-6;
 
     const w = weightOn(def.key, st.daily[d], age);
+    const hurt = isPart && injuredParts(st.issues, d).has(def.key);
     if (w > 0) {
       let g = w * (!def.noSoon && last !== null && i - last < 2 ? GAIN_SOON : gainBase);
       const week = gains.filter((x) => x.i > i - 7).reduce((s, x) => s + x.g, 0);
       g = Math.max(0, Math.min(g, WEEK_CAP - week, cap - pts));
       if (g > 0) { pts += g; gains.push({ i, g }); }
       last = i; anchor = i;
-    } else if (anchor !== null && i - anchor >= def.decayDay && pts > THRESH[C_MINUS]) {
+    } else if (!hurt && anchor !== null && i - anchor >= def.decayDay && pts > THRESH[C_MINUS]) {
       pts -= DECAY_RATE * (pts - THRESH[C_MINUS]);
     }
+    if (hurt) pts -= INJURY_DECAY * pts;
     history.push({ date: d, value: Math.round(pts * 10) / 10 });
   });
 
@@ -417,11 +435,12 @@ function replay(def, st, days, age, sers) {
   // since:減少の判定に使う日数(最後に鍛えた日か自己評価の日から)。trainedSince:実際に鍛えてからの日数
   const since = anchor === null ? null : n - anchor;
   const trainedSince = last === null ? null : n - last;
-  const decaying = since !== null && since >= def.decayDay && rawStep >= C_MINUS;
+  const injured = isPart && injuredParts(st.issues, days[n]).has(def.key);
+  const decaying = injured || (since !== null && since >= def.decayDay && rawStep >= C_MINUS);
   return {
     key: def.key, name: def.name, pts, step, ceil, rawStep, decayDay: def.decayDay,
     atCeil: rawStep >= ceil && ceil < MAX_STEP,
-    last: last === null ? null : days[last], since, trainedSince, decaying, self, base,
+    last: last === null ? null : days[last], since, trainedSince, decaying, injured, self, base,
     recent: days.slice(-28).map((d) => weightOn(def.key, st.daily[d], age)),
     history: history.slice(-120),
     tests: def.tests.filter((k) => sers[k].length).map((k) => ({
@@ -455,6 +474,7 @@ export function physicalStatus(st, today = isoDate(new Date())) {
 
 // 部位・項目の今の状態(回復中/鍛えどき/減少中)
 export function restState(s) {
+  if (s.injured) return { label: 'けが', tone: 'bad' };
   if (s.since === null) return { label: '未記録', tone: 'muted' };
   if (s.decaying) return { label: '減少中', tone: 'bad' };
   if (s.trainedSince !== null && s.trainedSince < 2 && !ABILITIES.find((a) => a.key === s.key)?.noSoon) return { label: '回復中', tone: 'rest' };
