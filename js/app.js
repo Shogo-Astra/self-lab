@@ -9,7 +9,7 @@ import { TIPS, PART_TIPS, QUIZ, QUIZ_CATS } from './content.js';
 import { radar, bodyMap, lineChart, barChart } from './charts.js';
 import { encodeCard, decodeCard, findCode, newId, upgradeParts } from './share.js';
 import { CHANGELOG, isNewer } from './changelog.js';
-import { HEALTH_KEYS, HEALTH_TEMPLATE, SAMPLE_MARK, parseHealth } from './health.js';
+import { HEALTH_KEYS, HEALTH_TEMPLATE, SAMPLE_MARK, SLEEP_MARK, parseHealth } from './health.js';
 import { normFor } from './norms.js';
 import { buildPlan, planRecord, PLACES, TIMES, COUNTS, FOCUSES, DEFAULT_PREFS } from './omakase.js';
 
@@ -578,11 +578,24 @@ function startHealthImport(text) {
   const freq = {};
   for (const v of Object.values(parsed.all)) if (v !== 0) freq[v] = (freq[v] ?? 0) + 1;
   const [same, n] = Object.entries(freq).sort((a, b) => b[1] - a[1])[0] ?? [null, 0];
-  // 歩数のサンプルは長いので、元の文字の表示では件数だけにする
-  const raw = String(text); const cut = raw.indexOf(SAMPLE_MARK);
-  const shown = cut < 0 ? raw : `${raw.slice(0, cut)}${SAMPLE_MARK}(${parsed.steps ? `歩数のサンプル${parsed.steps.n}件は省略` : '歩数のサンプルは読み取れませんでした'})`;
+  // 歩数・睡眠のサンプルは長いので、元の文字の表示では件数だけにする
+  const raw = String(text);
+  const cuts = [raw.indexOf(SAMPLE_MARK), raw.indexOf(SLEEP_MARK)].filter((i) => i >= 0);
+  const note = [raw.includes(SAMPLE_MARK) && (parsed.steps ? `歩数のサンプル${parsed.steps.n}件` : '歩数のサンプル(読み取れず)'),
+    raw.includes(SLEEP_MARK) && (parsed.sleep ? `睡眠のサンプル${parsed.sleep.n}件` : '睡眠のサンプル(0件か読み取れず)')].filter(Boolean);
+  const shown = cuts.length ? `${raw.slice(0, Math.min(...cuts))}#(${note.join('、')}は省略)` : raw;
   ui.health = { ...parsed, day, suspicious: n >= 3 ? same : null, raw: shown.slice(0, 6000) };
   render(); $('#sheet').scrollTop = 0;
+}
+
+// 睡眠の内訳(時間帯・段階ごとの時間・ソース)。覚醒・ベッド内は数えていないことがわかるように
+const hm = (min) => (min >= 60 ? `${Math.floor(min / 60)}時間${min % 60 ? `${min % 60}分` : ''}` : `${min}分`);
+function sleepNote(s) {
+  if (!s.used) return '<p class="t-muted small">睡眠:昨夜の記録が見つかりませんでした(前日18時〜今日18時に終わった記録を探します)。</p>';
+  const st = s.stages.filter((x) => x.min > 0).sort((a, b) => (a.kind === 'asleep' ? 0 : 1) - (b.kind === 'asleep' ? 0 : 1) || b.min - a.min);
+  const counted = st.filter((x) => x.kind === 'asleep').map((x) => `${esc(x.label)} ${hm(x.min)}`).join('、');
+  const left = st.filter((x) => x.kind !== 'asleep').map((x) => `${esc(x.label)} ${hm(x.min)}`).join('、');
+  return `<p class="t-muted small">睡眠は${s.from}〜${s.to}の記録から、眠っていた時間だけを数えました(${counted || 'なし'}${left ? `。数えない:${left}` : ''} → ${hm(Math.round(s.total))})。${s.sources.length > 1 ? `記録したソース:${s.sources.map((x) => esc(x.src)).join('、')}(上のソースを優先)。` : ''}</p>`;
 }
 
 function viewHealthImport() {
@@ -602,6 +615,7 @@ function viewHealthImport() {
         <input type="date" value="${h.day}" max="${today()}" data-action="health-day"></label>
       <div class="list">${rows}</div>
       ${h.steps && h.steps.sources.length > 1 ? `<p class="t-muted small">歩数は、ヘルスケアアプリと同じくApple Watchを優先し、iPhoneなどと同じ時間に数えた分を重ねずに計算しました(${h.steps.sources.map((x) => `${esc(x.src)} ${x.sum.toLocaleString()}歩`).join('、')} → ${h.steps.total.toLocaleString()}歩)。</p>` : ''}
+      ${h.sleep ? sleepNote(h.sleep) : ''}
       ${h.skipped.length ? `<p class="chk small">範囲外のため取り込まない:${esc(h.skipped.join('、'))}</p>` : ''}
       ${h.suspicious !== null ? `<div class="info"><h3>値がおかしいかもしれません</h3><p>種類の違う3つ以上の項目が、同じ数字(${esc(h.suspicious)})になっています。ショートカットがヘルスケアの種類を正しく読めていない可能性があります。ヘルスケアアプリの値と見比べてから取り込んでください。</p></div>` : ''}
       <p class="t-muted small">チェックインのほかの項目(鍛えた部位・睡眠休養感など)はそのまま残ります。測定は前回と同じ値なら追加しません。</p>
@@ -652,7 +666,7 @@ function viewHealthGuide() {
       ${step(1, '新しいショートカットを作る', '「ショートカット」アプリを開き、右上の「+」をタップ。名前は「Self Lab 取り込み」など。')}
       ${step(2, '歩数', '「ヘルスケアサンプルを検索」を追加し、条件を「種類が歩数」「開始日が今日」にする。続けて「統計を計算」を追加して「合計」にし、「変数を設定」で名前を「歩数」にする。')}
       ${step(3, 'エクササイズ時間', '2と同じ手順で、種類を「エクササイズ時間」にして合計し、変数「運動」にする。')}
-      ${step(4, '睡眠時間', '「ヘルスケアサンプルを検索」で「種類が睡眠分析」「終了日が今日」にし、値が「ベッド内」でも「覚醒」でもないもの(睡眠中・コア・深い・レム)に絞る。続けて「ヘルスケアサンプルの詳細を取得」で「継続時間」を選び、「統計を計算」で合計して、変数「睡眠」にする。')}
+      ${step(4, '睡眠時間', '「ヘルスケアサンプルを検索」で「種類が睡眠分析」「終了日が今日」にし、値が「ベッド内」でも「覚醒」でもないもの(睡眠中・コア・深い・レム)に絞る。続けて「ヘルスケアサンプルの詳細を取得」で「継続時間」を選び、「統計を計算」で合計して、変数「睡眠」にする。値の条件を付けると0件になる場合は、条件なしで合計する(目が覚めていた時間も入るので、少し長めになる)。配布しているショートカットは、Self Lab側で眠っていた時間だけを数えます。')}
       ${step(5, '安静時心拍・VO2max・体重・体脂肪率・血圧', 'それぞれ「ヘルスケアサンプルを検索」で種類(安静時心拍数/最大酸素摂取量/体重/体脂肪率/収縮期血圧/拡張期血圧)を選び、「並べ替え:開始日(新しい順)」「制限:1」にして変数を設定する。使わない項目は作らなくて大丈夫。')}
       ${step(6, '日付', '「日付をフォーマット」を追加し、日付を「現在の日付」、形式を「カスタム」にして「yyyy-MM-dd」と入れ、変数「日付」にする。')}
       ${step(7, '取り込み用の文字', '「テキスト」を追加し、下の「雛形をコピー」で写した文字を貼り付ける。各行の「=」のうしろに、対応する変数を入れる(day=日付、steps=歩数、sleep=睡眠、exercise=運動、rhr=安静時心拍 …)。')}

@@ -80,7 +80,17 @@ function sampleBlock(lines) {
   if (idx.some((i, k) => i < 0 || (k && i <= idx[k - 1]))) return null;
   const [src, val, start, dur] = [0, 1, 2, 3].map((k) => lines.slice(idx[k] + 1, idx[k + 1]).map((l) => l.trim()).filter((l) => l !== ''));
   if ([val, start, dur].some((a) => a.length !== src.length)) return null;
-  return src.map((name, i) => ({ src: name, value: firstNumber(val[i]) ?? 0, start: timeOfDay(start[i]), dur: seconds(dur[i]) ?? 0 }));
+  return src.map((name, i) => ({ src: name, raw: val[i], value: firstNumber(val[i]) ?? 0, start: timeOfDay(start[i]), at: dateTime(start[i]), dur: seconds(dur[i]) ?? 0 }));
+}
+
+// 「2026/11/02 0:59」→ 1970年からの秒(タイムゾーンは考えず、日付の境目の計算にだけ使う)
+function dateTime(s) {
+  let y, m, d;
+  const ymd = s.match(/(\d{4})\s*[-/年.]\s*(\d{1,2})\s*[-/月.]\s*(\d{1,2})/);
+  const mdy = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (ymd) [, y, m, d] = ymd; else if (mdy) [, m, d, y] = mdy; else return null;
+  const t = timeOfDay(s);
+  return t === null ? null : Date.UTC(Number(y), Number(m) - 1, Number(d)) / 1000 + t;
 }
 
 const rank = (src) => (/watch/i.test(src) ? 0 : /iphone/i.test(src) ? 1 : 2);
@@ -114,11 +124,60 @@ export function mergeSteps(samples) {
   return { total: Math.round(total), sources, n: samples.length };
 }
 
+// 睡眠のサンプル(ショートカット v7〜)。v6 の「値がベッド内でも覚醒でもない」という検索条件では0件になり
+// (2026-11-02 実機:条件なしの合計 5時間58分、ヘルスケアアプリの睡眠 5時間44分)、Self Lab 側で分けることにした。
+// 値の文字(英語・日本語)か、HealthKit の番号(0=ベッド内、2=覚醒)で分け、それ以外(コア・深い・レム・睡眠中)を睡眠として数える
+export const SLEEP_MARK = '#sleep-samples';
+export function sleepStage(raw) {
+  const s = String(raw ?? '').trim();
+  if (/ベッド|in\s*bed/i.test(s) || s === '0') return 'bed';
+  if (/覚醒|起き|awake/i.test(s) || s === '2') return 'awake';
+  return 'asleep';
+}
+
+// day の夜の睡眠:終わりが前日18時〜その日18時のサンプル。Apple Watch → iPhone → そのほかの順に優先し、
+// 上位のソースが何か記録している時間帯(覚醒・ベッド内も含む)には、下位のソースの睡眠を足さない。同じ時間帯は1回だけ数える
+export function mergeSleep(samples, day) {
+  const ok = samples.filter((x) => x.at !== null && x.dur > 0);
+  const lastEnd = Math.max(...ok.map((x) => x.at + x.dur));
+  const base = day ? Date.UTC(...day.split('-').map((v, i) => Number(v) - (i === 1 ? 1 : 0))) / 1000 : Math.floor(lastEnd / 86400) * 86400;
+  const lo = base - 6 * 3600; const hi = base + 18 * 3600;
+  const night = ok.filter((x) => x.at + x.dur > lo && x.at + x.dur <= hi);
+  const bySrc = new Map();
+  for (const x of night) { if (!bySrc.has(x.src)) bySrc.set(x.src, []); bySrc.get(x.src).push(x); }
+  const order = [...bySrc.keys()].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  let covered = []; let asleep = []; const stages = new Map(); const sources = [];
+  // 区間 [s, e] から covered と重なる部分を除いた残り
+  const minus = (s, e) => covered.reduce((parts, [a, b]) => parts.flatMap(([x, y]) => (b <= x || a >= y ? [[x, y]] : [[x, a], [b, y]].filter(([p, q]) => q > p))), [[s, e]]);
+  for (const src of order) {
+    const list = bySrc.get(src); let sec = 0;
+    for (const x of list) {
+      const kind = sleepStage(x.raw);
+      const label = String(x.raw ?? '').trim() || '(値なし)';
+      const st = stages.get(label) ?? { label, kind, sec: 0 };
+      const parts = minus(x.at, x.at + x.dur);
+      const len = parts.reduce((n, [a, b]) => n + b - a, 0);
+      st.sec += len; stages.set(label, st);
+      if (kind === 'asleep') { asleep.push(...parts); sec += len; }
+    }
+    sources.push({ src, min: Math.round(sec / 60), n: list.length });
+    covered = unite([...covered, ...list.map((x) => [x.at, x.at + x.dur])]);
+  }
+  asleep = unite(asleep);
+  const total = asleep.reduce((n, [a, b]) => n + b - a, 0) / 60;
+  const fmt = (t) => { const d = new Date(t * 1000); return `${d.getUTCHours()}:${String(d.getUTCMinutes()).padStart(2, '0')}`; };
+  return {
+    total, n: samples.length, used: night.length, sources,
+    stages: [...stages.values()].map((x) => ({ ...x, min: Math.round(x.sec / 60) })),
+    from: asleep.length ? fmt(asleep[0][0]) : null, to: asleep.length ? fmt(asleep.at(-1)[1]) : null,
+  };
+}
+
 export function parseHealth(text) {
   const t = toHalf(String(text ?? ''));
   if (!/SELFLAB/i.test(t)) return null;
-  // all:範囲外も含めて読めた数値(同じ数字ばかりでないかの確認用)、steps:歩数をサンプルから計算したときの内訳
-  const out = { day: null, values: {}, skipped: [], all: {}, steps: null };
+  // all:範囲外も含めて読めた数値(同じ数字ばかりでないかの確認用)、steps・sleep:サンプルから計算したときの内訳
+  const out = { day: null, values: {}, skipped: [], all: {}, steps: null, sleep: null };
   const put = (key, raw, v) => {
     const def = HEALTH_KEYS[key];
     out.all[key] = v;
@@ -130,7 +189,9 @@ export function parseHealth(text) {
     out.values[key] = Number(v.toFixed(def.digits));
   };
   const lines = t.split(/\r?\n/);
-  const cut = lines.findIndex((l) => l.trim().startsWith(SAMPLE_MARK));
+  const markAt = (mark) => lines.findIndex((l) => l.trim().startsWith(mark));
+  const marks = [markAt(SAMPLE_MARK), markAt(SLEEP_MARK)].filter((i) => i >= 0);
+  const cut = marks.length ? Math.min(...marks) : -1;
   for (const line of cut < 0 ? lines : lines.slice(0, cut)) {
     const m = line.match(/^\s*([a-z0-9]+)\s*[=:]\s*(.*)$/i);
     if (!m) continue;
@@ -145,10 +206,17 @@ export function parseHealth(text) {
     if (v === null || Number.isNaN(v)) continue;
     put(key, raw, v);
   }
-  if (cut >= 0) {
-    const samples = sampleBlock(lines.slice(cut + 1));
+  const stepsAt = markAt(SAMPLE_MARK);
+  if (stepsAt >= 0) {
+    const samples = sampleBlock(lines.slice(stepsAt + 1));
     if (!samples) out.skipped.push('歩数(サンプルを読み取れませんでした)');
     else { out.steps = mergeSteps(samples); put('steps', String(out.steps.total), out.steps.total); }
+  }
+  const sleepAt = markAt(SLEEP_MARK);
+  if (sleepAt >= 0) {
+    const samples = sampleBlock(lines.slice(sleepAt + 1));
+    if (!samples) out.skipped.push('睡眠(サンプルを読み取れませんでした)');
+    else if (samples.length) { out.sleep = mergeSleep(samples, out.day); put('sleep', `${Math.round(out.sleep.total)}分`, out.sleep.total / 60); }
   }
   return out;
 }
